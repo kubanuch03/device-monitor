@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Device Monitor</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Device Monitor</span>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="topbar-actions">
+      <span class="updated" id="updated"></span>
+      <button type="button" id="recheck">Проверить сейчас</button>
+      <button type="button" class="primary" id="add">Добавить устройство</button>
+    </div>
+  </div>
+</header>
+
+<main class="page">
+  <div id="alert" class="alert" hidden></div>
+  <div id="view"></div>
+  <div id="empty" class="empty" hidden>
+    <h2>Пока ни одного устройства</h2>
+    <p>Добавьте камеру, домофон, коммутатор или сервер — сервис начнёт проверять
+       его доступность и покажет, когда он пропал.</p>
+    <button type="button" class="primary" id="add-first">Добавить первое устройство</button>
+  </div>
+</main>
+
+<dialog id="editor">
+  <form method="dialog" id="editor-form">
+    <h2 id="editor-title">Новое устройство</h2>
+
+    <div class="field">
+      <label for="f-site">Объект</label>
+      <input id="f-site" name="site" list="site-options" placeholder="ТЦ Ала-Арча" autocomplete="off">
+      <datalist id="site-options"></datalist>
+      <p class="hint">Группа, в которой устройство будет показано. Новое имя создаёт новую группу.</p>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="f-name">Название</label>
+        <input id="f-name" name="name" placeholder="Камера ANPR, въезд 1" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="f-category">Категория</label>
+        <input id="f-category" name="category" list="category-options" placeholder="Камеры" autocomplete="off">
+        <datalist id="category-options">
+          <option value="Камеры"></option>
+          <option value="Домофоны"></option>
+          <option value="Шлагбаумы"></option>
+          <option value="Терминалы"></option>
+          <option value="Коммутаторы"></option>
+          <option value="Серверы"></option>
+        </datalist>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="f-host">Адрес</label>
+        <input id="f-host" name="host" placeholder="10.30.205.24" required autocomplete="off" spellcheck="false">
+        <p class="hint">Можно вставить ссылку целиком — порт и путь разберутся сами.</p>
+      </div>
+      <div class="field narrow">
+        <label for="f-scheme">Схема</label>
+        <select id="f-scheme" name="scheme">
+          <option value="http">http</option>
+          <option value="https">https</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="f-ports">Порты для проверки</label>
+        <input id="f-ports" name="ports" placeholder="80, 554, 37777" autocomplete="off" spellcheck="false">
+        <p class="hint">Устройство считается живым, если открыт хотя бы один из них.</p>
+      </div>
+      <div class="field narrow">
+        <label for="f-web-port">Порт интерфейса</label>
+        <input id="f-web-port" name="web_port" placeholder="—" inputmode="numeric" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="f-path">Путь</label>
+      <input id="f-path" name="path" placeholder="/admin/" autocomplete="off" spellcheck="false">
+      <p class="hint">Куда открывать на устройстве. По умолчанию корень — <code>/</code>.</p>
+    </div>
+
+    <div class="field">
+      <label for="f-note">Заметка</label>
+      <input id="f-note" name="note" placeholder="Серийник, MAC, к какому гейту относится" autocomplete="off">
+    </div>
+
+    <p class="form-error" id="form-error" hidden></p>
+
+    <div class="editor-actions">
+      <button type="button" id="editor-cancel">Отмена</button>
+      <button type="submit" class="primary" id="editor-save">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="group-editor">
+  <form method="dialog" id="group-form">
+    <h2 id="group-editor-title">Новая точка</h2>
+
+    <div class="field">
+      <label for="g-name" id="g-name-label">Название точки</label>
+      <input id="g-name" name="name" placeholder="ТЦ Ала-Арча" required autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label for="g-note">Заметка</label>
+      <input id="g-note" name="note" placeholder="Адрес, подсеть, кто отвечает" autocomplete="off">
+    </div>
+
+    <p class="form-error" id="group-form-error" hidden></p>
+
+    <div class="editor-actions">
+      <button type="button" class="subtle danger" id="group-delete" hidden>Удалить</button>
+      <span class="spacer"></span>
+      <button type="button" id="group-cancel">Отмена</button>
+      <button type="submit" class="primary">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="detail">
+  <div id="detail-body"></div>
+  <div class="editor-actions">
+    <button type="button" id="detail-inspect">Опросить устройство</button>
+    <span class="spacer"></span>
+    <button type="button" id="detail-close">Закрыть</button>
+  </div>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

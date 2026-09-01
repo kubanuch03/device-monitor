@@ -1,0 +1,13 @@
+# Данные у каждого свои — в репозитории только пример.
+/data/monitor.db
+/data/monitor.db-*
+/data/devices.json
+/data/devices.json.migrated
+/data/*.tmp
+
+# Пароль панели
+.env
+
+__pycache__/
+*.py[cod]
+.venv/

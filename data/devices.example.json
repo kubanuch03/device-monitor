@@ -1,0 +1,82 @@
+{
+  "version": 3,
+  "sites": [
+    {
+      "name": "ТЦ Ала-Арча",
+      "note": "пример — замените своими устройствами"
+    }
+  ],
+  "categories": [
+    {
+      "site": "ТЦ Ала-Арча",
+      "name": "Камеры",
+      "note": "ANPR на въездах/выездах"
+    },
+    {
+      "site": "ТЦ Ала-Арча",
+      "name": "Сеть",
+      "note": "коммутаторы, роутер"
+    },
+    {
+      "site": "ТЦ Ала-Арча",
+      "name": "Серверы",
+      "note": ""
+    }
+  ],
+  "devices": [
+    {
+      "id": "example-camera",
+      "site": "ТЦ Ала-Арча",
+      "category": "Камеры",
+      "name": "Камера ANPR",
+      "host": "10.30.205.24",
+      "ports": [
+        80,
+        554,
+        37777
+      ],
+      "scheme": "http",
+      "web_port": null,
+      "path": "/",
+      "username": "",
+      "password_enc": "",
+      "note": "Dahua ITC413"
+    },
+    {
+      "id": "example-switch",
+      "site": "ТЦ Ала-Арча",
+      "category": "Сеть",
+      "name": "Коммутатор PoE",
+      "host": "10.30.205.91",
+      "ports": [
+        80,
+        443,
+        8000
+      ],
+      "scheme": "http",
+      "web_port": null,
+      "path": "/",
+      "username": "",
+      "password_enc": "",
+      "note": "Hikvision DS-3E1310P-EI"
+    },
+    {
+      "id": "example-server",
+      "site": "ТЦ Ала-Арча",
+      "category": "Серверы",
+      "name": "Сервер объекта",
+      "host": "10.30.205.243",
+      "ports": [
+        8833,
+        8001,
+        22
+      ],
+      "scheme": "http",
+      "web_port": 8833,
+      "path": "/admin/",
+      "username": "",
+      "password_enc": "",
+      "note": ""
+    }
+  ]
+}
