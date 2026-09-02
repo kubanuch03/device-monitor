@@ -33,32 +33,29 @@ docker compose up -d
 ## 2. Туннель до объекта без прямого маршрута
 
 Нужен только для объектов, до которых у этой машины нет сетевого пути.
+Одной командой:
 
 ```bash
 sudo apt install autossh
-
-# файл настроек объекта
-sudo mkdir -p /etc/device-monitor/tunnels
-sudo cp deploy/tunnels.example/balykchy.conf /etc/device-monitor/tunnels/
-# отредактируйте SSH_TARGET и SOCKS_PORT под объект
-
-# сам юнит
-sudo cp deploy/device-tunnel@.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now device-tunnel@balykchy
-
-systemctl status device-tunnel@balykchy      # проверить, что поднялся
+sudo ./deploy/setup-tunnel.sh balykchy balykchy 1081
+#                             имя      ssh-target порт
 ```
 
-Затем в панели у точки этого объекта в поле «SOCKS-прокси точки» указать
-`socks5://127.0.0.1:<SOCKS_PORT>` — и её устройства начнут проверяться через
-туннель.
+Скрипт проверит SSH-доступ, поставит systemd-юнит и conf, включит автозапуск и
+дождётся, пока порт забиндится. Затем в панели у точки этого объекта впишите в
+поле «SOCKS-прокси точки» `socks5://127.0.0.1:1081` — и её устройства начнут
+проверяться через туннель.
 
-## Новый объект = повтор шага 2
+Если предпочитаете руками — см. шаблоны `device-tunnel@.service` и
+`tunnels.example/`, скрипт делает ровно то же.
 
-Скопировать `<имя>.conf` с другим `SSH_TARGET`/`SOCKS_PORT` (порт уникальный на
-каждый объект), `systemctl enable --now device-tunnel@<имя>`, прописать прокси
-точке. Один шаблон юнита обслуживает сколько угодно объектов.
+## Новый объект = одна команда
+
+```bash
+sudo ./deploy/setup-tunnel.sh <имя> <ssh-target> <порт>   # порт уникальный
+```
+
+Один шаблон юнита обслуживает сколько угодно объектов; порт у каждого свой.
 
 ## Если туннель ляжет
 
