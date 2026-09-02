@@ -1,0 +1,41 @@
+# Постоянный SOCKS-туннель до одного объекта для Device Monitor.
+#
+# Параметризованный шаблон: одно имя instance = один объект.
+#   sudo systemctl enable --now device-tunnel@balykchy
+# поднимет туннель по настройкам из /etc/device-monitor/tunnels/balykchy.conf
+# и будет держать его живым (autossh переподнимает при обрыве).
+#
+# Туннель идёт С ЭТОЙ машины (где крутится device-monitor) НА сервер объекта.
+# На сервере объекта ставить ничего не нужно — только рабочий SSH-доступ.
+
+[Unit]
+Description=Device Monitor SOCKS tunnel to %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Настройки конкретного объекта: SSH_TARGET и SOCKS_PORT.
+EnvironmentFile=/etc/device-monitor/tunnels/%i.conf
+
+# -N: не запускать команды, только форвард. -D: SOCKS на localhost.
+# ControlMaster=no + ControlPath=none — свой канал, иначе форвард сядет на
+# общий mux-процесс и autossh не сможет управлять соединением независимо.
+# ExitOnForwardFailure=yes — autossh перезапустит, если порт не забиндился.
+# ServerAliveInterval/CountMax — быстро замечать мёртвое соединение.
+ExecStart=/usr/bin/autossh -M 0 -N \
+    -o ControlMaster=no -o ControlPath=none \
+    -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -o StrictHostKeyChecking=accept-new \
+    -D 127.0.0.1:${SOCKS_PORT} ${SSH_TARGET}
+
+Environment=AUTOSSH_GATETIME=0
+Restart=always
+RestartSec=10
+
+# Работает от обычного пользователя (нужен его ssh-ключ и ~/.ssh/config).
+# Замените на того, у кого настроен доступ к серверам объектов.
+User=pc-kaltynbek-uulu
+
+[Install]
+WantedBy=multi-user.target
