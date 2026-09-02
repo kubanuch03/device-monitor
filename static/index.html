@@ -97,6 +97,21 @@
       <p class="hint">Куда открывать на устройстве. По умолчанию корень — <code>/</code>.</p>
     </div>
 
+    <div class="row">
+      <div class="field">
+        <label for="f-username">Логин устройства</label>
+        <input id="f-username" name="username" placeholder="admin" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="f-password">Пароль устройства</label>
+        <div class="pw-wrap">
+          <input id="f-password" name="password" type="password" placeholder="" autocomplete="new-password">
+          <button type="button" id="f-password-eye" class="pw-eye" aria-label="Показать пароль" title="Показать пароль"></button>
+        </div>
+        <p class="hint" id="f-password-hint">Нужен для сбора сведений с устройства (модель, серийник, прошивка).</p>
+      </div>
+    </div>
+
     <div class="field">
       <label for="f-note">Заметка</label>
       <input id="f-note" name="note" placeholder="Серийник, MAC, к какому гейту относится" autocomplete="off">

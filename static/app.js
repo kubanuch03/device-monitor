@@ -325,6 +325,38 @@ function deviceCard(device) {
   actions.append(open, info, edit, copy, remove);
   card.append(head, host, ports, meta);
 
+  // Раскрывающийся блок «Доп. инфо»: сведения, которые устройство рассказало о
+  // себе (модель, серийник, прошивка, MAC, отпечаток). Заполняется из facts —
+  // вендор и модель Hikvision видны без пароля, остальное приходит по учётке.
+  const facts = device.facts || {};
+  const rows = FACT_ORDER.filter((k) => facts[k] && k !== "detail" && k !== "checked_at");
+  const extra = document.createElement("details");
+  extra.className = "more";
+  const sum = document.createElement("summary");
+  sum.textContent = rows.length ? "Доп. инфо" : "Доп. инфо — нет данных";
+  extra.append(sum);
+  if (rows.length) {
+    const dl = document.createElement("dl");
+    dl.className = "more-list";
+    rows.forEach((k) => {
+      const dt = document.createElement("dt");
+      dt.textContent = FACT_LABELS[k];
+      const dd = document.createElement("dd");
+      dd.textContent = facts[k];
+      dl.append(dt, dd);
+    });
+    extra.append(dl);
+  } else {
+    const hint = document.createElement("p");
+    hint.className = "more-hint";
+    hint.textContent = facts.detail
+      ? facts.detail
+      : "Сведения появятся после опроса устройства (модель, серийник, прошивка). "
+        + "Серийник и прошивку устройство отдаёт по логину — задайте его в «Настроить».";
+    extra.append(hint);
+  }
+  card.append(extra);
+
   if (device.note) {
     const note = document.createElement("div");
     note.className = "card-note";
@@ -676,6 +708,18 @@ function openEditor(device, preset, asCopy) {
   els.form.ports.value = device ? device.ports.join(", ") : "80";
   els.form.web_port.value = device && device.web_port ? device.web_port : "";
   els.form.path.value = device ? device.path || "/" : "";
+  els.form.username.value = device ? device.username || "" : "";
+  // Пароль write-only: в форме всегда пусто, существующий не показываем и не
+  // отдаём наружу. Плейсхолдер сообщает, задан ли он и что пустое поле = «не
+  // менять». У копии пароль не переносим (это другое устройство).
+  els.form.password.value = "";
+  els.form.password.type = "password";
+  if (pwEye) pwEye.innerHTML = EYE;
+  const hasPass = !!(device && device.has_password) && !asCopy;
+  els.form.password.placeholder = hasPass ? "сохранён — пусто = не менять" : "";
+  document.getElementById("f-password-hint").textContent = hasPass
+    ? "Оставьте пустым, чтобы не менять. Введите новый — чтобы заменить."
+    : "Нужен для сбора сведений с устройства (модель, серийник, прошивку).";
   els.form.note.value = device ? device.note || "" : "";
   els.formError.hidden = true;
   els.editor.showModal();
@@ -695,8 +739,11 @@ els.form.addEventListener("submit", async (event) => {
     ports: els.form.ports.value,
     web_port: els.form.web_port.value,
     path: els.form.path.value,
+    username: els.form.username.value,
     note: els.form.note.value,
   };
+  // Пароль шлём только если поле заполнено: пустое = «не менять» (см. бэкенд).
+  if (els.form.password.value) payload.password = els.form.password.value;
   try {
     const result = editingId
       ? await api(`/api/devices/${editingId}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -716,6 +763,20 @@ els.form.addEventListener("submit", async (event) => {
 });
 
 document.getElementById("editor-cancel").onclick = () => els.editor.close();
+
+// Глаз у поля пароля: переключает видимость. Иконки рисуем прямо здесь, чтобы
+// не тащить набор иконок ради одной кнопки.
+const EYE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.9 4.2A11 11 0 0 1 12 4c7 0 11 7 11 7a18 18 0 0 1-3 3.5M6.6 6.6A18 18 0 0 0 1 12s4 7 11 7a11 11 0 0 0 4-.7"/><path d="m3 3 18 18"/></svg>';
+const pwEye = document.getElementById("f-password-eye");
+pwEye.innerHTML = EYE;
+pwEye.onclick = () => {
+  const shown = els.form.password.type === "text";
+  els.form.password.type = shown ? "password" : "text";
+  pwEye.innerHTML = shown ? EYE : EYE_OFF;
+  pwEye.title = shown ? "Показать пароль" : "Скрыть пароль";
+  pwEye.setAttribute("aria-label", pwEye.title);
+};
 
 // ---------------------------------------------------------------------------
 // карточка сведений: что устройство рассказало о себе + история доступности
@@ -781,21 +842,6 @@ async function copyText(text, button) {
   setTimeout(() => { button.textContent = original; }, 1500);
 }
 
-function credRow(label, shownValue, copyValue) {
-  const row = document.createElement("div");
-  row.className = "cred-row";
-  const lab = document.createElement("span");
-  lab.className = "cred-label";
-  lab.textContent = label;
-  const val = document.createElement("code");
-  val.className = "cred-value";
-  val.textContent = shownValue;
-  row.append(lab, val);
-  if (copyValue) {
-    row.append(mkBtn("Копировать", (e) => copyText(copyValue, e.currentTarget)));
-  }
-  return row;
-}
 
 async function openDetail(id) {
   detailId = id;
@@ -836,50 +882,6 @@ async function renderDetail() {
     hint.textContent = "Модель, серийник и прошивку устройство отдаёт только по логину — "
       + "добавьте учётные данные в «Настроить».";
     detailBody.append(hint);
-  }
-
-  // Учётные данные: логин копируется свободно, пароль - по кнопке, отдельным
-  // запросом, чтобы секрет не тянулся в общий стейт.
-  if (device.username || device.has_password) {
-    const h = document.createElement("h3");
-    h.textContent = "Учётные данные";
-    const box = document.createElement("div");
-    box.className = "creds";
-
-    box.append(credRow("Логин", device.username || "—", device.username || ""));
-
-    const passRow = document.createElement("div");
-    passRow.className = "cred-row";
-    const label = document.createElement("span");
-    label.className = "cred-label";
-    label.textContent = "Пароль";
-    const value = document.createElement("code");
-    value.className = "cred-value";
-    value.textContent = device.has_password ? "••••••••" : "не задан";
-    passRow.append(label, value);
-
-    if (device.has_password) {
-      let shown = false;
-      let secret = "";
-      const ensure = async () => {
-        if (!secret) {
-          const data = await api(`/api/devices/${device.id}/secret`);
-          secret = data.password || "";
-        }
-        return secret;
-      };
-      const show = mkBtn("Показать", async () => {
-        shown = !shown;
-        value.textContent = shown ? (await ensure()) || "—" : "••••••••";
-        show.textContent = shown ? "Скрыть" : "Показать";
-      });
-      const copy = mkBtn("Копировать", async () => {
-        await copyText(await ensure(), copy);
-      });
-      passRow.append(show, copy);
-    }
-    box.append(passRow);
-    detailBody.append(h, box);
   }
 
   // История доступности

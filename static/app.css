@@ -482,3 +482,34 @@ input::placeholder { color: var(--muted); opacity: .8; }
   margin-left: 8px;
   white-space: nowrap;
 }
+
+/* ---------- глаз у поля пароля ---------- */
+.pw-wrap { position: relative; display: flex; align-items: center; }
+.pw-wrap input { padding-right: 38px; width: 100%; }
+.pw-eye {
+  position: absolute; right: 4px;
+  border: none; background: none; padding: 4px;
+  color: var(--muted); cursor: pointer; display: flex;
+}
+.pw-eye:hover { color: var(--ink); border: none; }
+
+/* ---------- раскрывающийся блок «Доп. инфо» в карточке ---------- */
+.card .more { margin-top: 2px; border-top: 1px solid var(--line-soft); padding-top: 8px; }
+.card .more summary {
+  cursor: pointer; font-size: 12.5px; color: var(--muted);
+  list-style: none; user-select: none;
+}
+.card .more summary::-webkit-details-marker { display: none; }
+.card .more summary::before { content: "▸ "; color: var(--accent); }
+.card .more[open] summary::before { content: "▾ "; }
+.card .more summary:hover { color: var(--ink); }
+.more-list {
+  display: grid; grid-template-columns: minmax(110px,auto) 1fr;
+  gap: 3px 12px; margin: 8px 0 2px;
+}
+.more-list dt { color: var(--muted); font-size: 12px; }
+.more-list dd {
+  margin: 0; font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 12px; word-break: break-all;
+}
+.more-hint { margin: 8px 0 2px; font-size: 12px; color: var(--muted); line-height: 1.45; }
