@@ -273,7 +273,21 @@ function deviceCard(device) {
   open.className = "primary";
   open.type = "button";
   open.textContent = "Открыть";
-  open.onclick = () => window.open(device.url, "_blank", "noopener");
+  // Прямая точка — обычная вкладка (браузер дойдёт сам). Точка за прокси —
+  // через devmon://, чтобы локальный лаунчер поднял профиль этой точки с её
+  // SOCKS: иначе обычная вкладка до устройства за туннелем не достучится.
+  const siteProxy = (siteInfo(device.site) || {}).proxy;
+  if (siteProxy) {
+    open.onclick = () => {
+      const link = "devmon://open?site=" + encodeURIComponent(device.site)
+        + "&proxy=" + encodeURIComponent(siteProxy)
+        + "&url=" + encodeURIComponent(device.url);
+      window.location.href = link;
+    };
+    open.title = "Откроется в профиле точки через её туннель (нужен установленный обработчик)";
+  } else {
+    open.onclick = () => window.open(device.url, "_blank", "noopener");
+  }
 
   const info = document.createElement("button");
   info.type = "button";

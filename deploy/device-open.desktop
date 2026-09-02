@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Device Monitor — открыть устройство
+Comment=Открывает веб-интерфейс устройства в профиле его точки через нужный прокси
+Exec=/PATH/TO/device-monitor/deploy/device-open %u
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/devmon;

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Открывает веб-интерфейс устройства в отдельном профиле браузера, привязанном
+# к его точке, через прокси этой точки. Обобщение archa-browser на любую точку:
+# профиль и прокси берутся из данных, а не зашиты — новая точка работает сама.
+#
+# Вызывается двумя способами:
+#   device-open 'devmon://open?site=<имя>&proxy=<socks>&url=<url>'   (из дашборда)
+#   device-open <url> [proxy] [site]                                (вручную)
+#
+# Почему отдельный лаунчер, а не кнопка прямо в вебе: браузер из соображений
+# безопасности не запускает локальные процессы по клику. Дашборд отдаёт ссылку
+# devmon://, система зовёт этот скрипт — он и поднимает браузер.
+#
+# Почему профиль на точку: у каждого объекта свой --user-data-dir, чтобы куки и
+# сессии камер разных объектов не мешались, и чтобы весь трафик профиля шёл
+# через прокси именно этой точки (--proxy-server действует на процесс).
+set -euo pipefail
+
+CHROME="${DEVICE_OPEN_BROWSER:-google-chrome}"
+PROFILE_ROOT="${DEVICE_OPEN_PROFILES:-$HOME/.config/device-monitor/profiles}"
+
+urldecode() { printf '%b' "${1//%/\\x}"; }
+
+site=""; proxy=""; url=""
+
+arg="${1:-}"
+if [[ "$arg" == devmon://* ]]; then
+    # devmon://open?site=..&proxy=..&url=..
+    query="${arg#devmon://open?}"
+    IFS='&' read -ra parts <<< "$query"
+    for p in "${parts[@]}"; do
+        key="${p%%=*}"; val="$(urldecode "${p#*=}")"
+        case "$key" in
+            site) site="$val" ;;
+            proxy) proxy="$val" ;;
+            url) url="$val" ;;
+        esac
+    done
+else
+    url="$arg"; proxy="${2:-}"; site="${3:-}"
+fi
+
+if [ -z "$url" ]; then
+    echo "Использование: device-open <url|devmon://...> [proxy] [site]" >&2
+    exit 2
+fi
+# Открываем только http(s) — не даём scheme-обработчику запускать произвольное.
+if [[ "$url" != http://* && "$url" != https://* ]]; then
+    echo "Открывается только http/https, а не: $url" >&2
+    exit 2
+fi
+
+# Имя профиля из точки; без точки — общий профиль «direct». Санитизируем через
+# python с флагом Unicode, чтобы кириллица сохранилась (иначе tr схлопывал бы
+# все буквы в _ и разные точки делили бы один профиль).
+safe_site="$(python3 -c "import sys,re; print(re.sub(r'[^\w.-]','_',sys.argv[1],flags=re.U) or 'direct')" "${site:-direct}")"
+profile="$PROFILE_ROOT/$safe_site"
+mkdir -p "$profile"
+
+args=( --user-data-dir="$profile" --no-first-run --no-default-browser-check
+       --class="DeviceMonitor-$safe_site" )
+if [ -n "$proxy" ]; then
+    args+=( --proxy-server="$proxy" )
+fi
+
+exec "$CHROME" "${args[@]}" "$url"
