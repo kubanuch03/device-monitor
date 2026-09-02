@@ -14,6 +14,7 @@ import time
 
 from device_monitor.config import PROBE_TIMEOUT
 from device_monitor.domain.models import Device, ProbeResult
+from device_monitor.probing.socks import ProxyError, check_port_via_socks
 
 
 def check_port(host: str, port: int) -> tuple[bool, float]:
@@ -26,11 +27,21 @@ def check_port(host: str, port: int) -> tuple[bool, float]:
         return False, (time.perf_counter() - started) * 1000
 
 
-def probe(device: Device) -> ProbeResult:
+def probe(device: Device, proxy: str = "") -> ProbeResult:
+    """Проверка портов устройства, напрямую или через SOCKS-прокси точки.
+
+    ProxyError (отказ туннеля) НЕ проглатывается здесь: он поднимается выше,
+    в цикл опроса, чтобы отличить «туннель до объекта лёг» (тогда offline все
+    устройства разом, и это надо показать отдельно) от «конкретное устройство
+    не отвечает».
+    """
     ports: dict[int, bool] = {}
     best: float | None = None
     for port in device.ports:
-        ok, elapsed = check_port(device.host, port)
+        if proxy:
+            ok, elapsed = check_port_via_socks(proxy, device.host, port, PROBE_TIMEOUT)
+        else:
+            ok, elapsed = check_port(device.host, port)
         ports[port] = ok
         if ok and (best is None or elapsed < best):
             best = elapsed

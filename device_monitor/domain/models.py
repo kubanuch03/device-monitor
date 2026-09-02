@@ -14,6 +14,9 @@ from dataclasses import dataclass, field, replace
 class Site:
     name: str
     note: str = ""
+    # SOCKS-прокси для объектов без прямого маршрута (напр. socks5://127.0.0.1:1080).
+    # Пусто = прямой доступ. Все устройства точки проверяются через него.
+    proxy: str = ""
 
 
 @dataclass(frozen=True)

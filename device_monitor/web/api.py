@@ -23,6 +23,7 @@ def now_iso() -> str:
 def state(app) -> tuple[int, dict]:
     live, updated_at = app.monitor.snapshot()
     facts = app.monitor.facts()
+    tunnels = app.monitor.tunnels()
 
     devices = []
     for device in app.storage.devices():
@@ -48,10 +49,21 @@ def state(app) -> tuple[int, dict]:
             "down": sum(1 for d in items if d["status"] == "down"),
         }
 
-    sites = [
-        {"name": s.name, "note": s.note, **summary([d for d in devices if d["site"] == s.name])}
-        for s in app.storage.sites()
-    ]
+    sites = []
+    for s in app.storage.sites():
+        row = {
+            "name": s.name,
+            "note": s.note,
+            "proxy": s.proxy,
+            **summary([d for d in devices if d["site"] == s.name]),
+        }
+        if s.proxy:
+            # Состояние туннеля отдаём отдельно от статусов устройств: когда он
+            # лёг, все устройства точки показываются down, и UI должен сказать
+            # «нет связи с туннелем объекта», а не «12 устройств не отвечают».
+            row["tunnel"] = tunnels.get(s.name, {}).get("status", "unknown")
+            row["tunnel_detail"] = tunnels.get(s.name, {}).get("detail")
+        sites.append(row)
     categories = [
         {
             "site": c.site,
@@ -123,13 +135,13 @@ def delete_device(app, device_id: str) -> tuple[int, dict]:
 
 
 def create_site(app, body: dict) -> tuple[int, dict]:
-    name, note = clean_site(body)
-    return HTTPStatus.CREATED, {"site": app.storage.add_site(name, note).__dict__}
+    name, note, proxy = clean_site(body)
+    return HTTPStatus.CREATED, {"site": app.storage.add_site(name, note, proxy).__dict__}
 
 
 def update_site(app, old: str, body: dict) -> tuple[int, dict]:
-    name, note = clean_site(body)
-    return HTTPStatus.OK, {"site": app.storage.update_site(old, name, note).__dict__}
+    name, note, proxy = clean_site(body)
+    return HTTPStatus.OK, {"site": app.storage.update_site(old, name, note, proxy).__dict__}
 
 
 def delete_site(app, name: str) -> tuple[int, dict]:

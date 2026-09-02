@@ -21,7 +21,8 @@ from device_monitor.domain.text import plural_ru, same_name
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sites (
     name TEXT PRIMARY KEY,
-    note TEXT NOT NULL DEFAULT ''
+    note TEXT NOT NULL DEFAULT '',
+    proxy TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -78,6 +79,10 @@ class SqliteStorage:
         with self._lock:
             self._db.executescript(SCHEMA)
             self._db.execute("PRAGMA journal_mode=WAL")
+            # Колонка proxy добавлена позже — на старых базах её нет.
+            cols = {r["name"] for r in self._db.execute("PRAGMA table_info(sites)")}
+            if "proxy" not in cols:
+                self._db.execute("ALTER TABLE sites ADD COLUMN proxy TEXT NOT NULL DEFAULT ''")
             self._db.commit()
         try:
             self.path.chmod(0o600)
@@ -116,17 +121,20 @@ class SqliteStorage:
     # -- точки ----------------------------------------------------------------
 
     def sites(self) -> list[Site]:
-        rows = self._rows("SELECT name, note FROM sites")
-        return sorted((Site(r["name"], r["note"]) for r in rows), key=lambda s: s.name.casefold())
+        rows = self._rows("SELECT name, note, proxy FROM sites")
+        return sorted(
+            (Site(r["name"], r["note"], r["proxy"]) for r in rows),
+            key=lambda s: s.name.casefold(),
+        )
 
-    def add_site(self, name: str, note: str) -> Site:
+    def add_site(self, name: str, note: str, proxy: str = "") -> Site:
         with self._lock:
             if any(same_name(s.name, name) for s in self.sites()):
                 raise ConflictError(f"Точка «{name}» уже есть")
-            self._exec("INSERT INTO sites(name, note) VALUES (?, ?)", (name, note))
-        return Site(name, note)
+            self._exec("INSERT INTO sites(name, note, proxy) VALUES (?, ?, ?)", (name, note, proxy))
+        return Site(name, note, proxy)
 
-    def update_site(self, old_name: str, name: str, note: str) -> Site:
+    def update_site(self, old_name: str, name: str, note: str, proxy: str = "") -> Site:
         with self._lock:
             if not self._rows("SELECT 1 FROM sites WHERE name = ?", (old_name,)):
                 raise ValidationError("Точка не найдена")
@@ -135,11 +143,11 @@ class SqliteStorage:
             # Переименование одной транзакцией: устройства и категории
             # ссылаются на точку по имени, и если обновить не всё сразу, часть
             # из них останется в точке, которой больше нет.
-            self._db.execute("UPDATE sites SET name = ?, note = ? WHERE name = ?", (name, note, old_name))
+            self._db.execute("UPDATE sites SET name = ?, note = ?, proxy = ? WHERE name = ?", (name, note, proxy, old_name))
             self._db.execute("UPDATE categories SET site = ? WHERE site = ?", (name, old_name))
             self._db.execute("UPDATE devices SET site = ? WHERE site = ?", (name, old_name))
             self._db.commit()
-        return Site(name, note)
+        return Site(name, note, proxy)
 
     def delete_site(self, name: str) -> None:
         with self._lock:

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from device_monitor.config import HISTORY_DAYS, INSPECT_TTL, MAX_WORKERS, POLL_INTERVAL
 from device_monitor.domain.models import Device
+from device_monitor.probing.socks import ProxyError
 from device_monitor.probing.tcp import probe
 from device_monitor.security import deobfuscate
 from device_monitor.vendors import identify
@@ -31,6 +32,7 @@ class Monitor:
         self._state: dict[str, dict] = {}
         self._facts: dict[str, dict] = {}
         self._forced: set[str] = set()
+        self._tunnels: dict[str, dict] = {}
         self._updated_at: str | None = None
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -41,6 +43,10 @@ class Monitor:
     def snapshot(self) -> tuple[dict[str, dict], str | None]:
         with self._lock:
             return {k: dict(v) for k, v in self._state.items()}, self._updated_at
+
+    def tunnels(self) -> dict[str, dict]:
+        with self._lock:
+            return {k: dict(v) for k, v in self._tunnels.items()}
 
     def facts(self) -> dict[str, dict]:
         with self._lock:
@@ -64,21 +70,43 @@ class Monitor:
 
     def run_once(self) -> None:
         devices = self.storage.devices()
+        proxies = {s.name: s.proxy for s in self.storage.sites()}
         if not devices:
             with self._lock:
                 self._state = {}
                 self._updated_at = now_iso()
             return
 
+        # Отказ туннеля точки помечается один раз на точку, а не считается
+        # «падением» каждого её устройства: иначе один упавший ssh -D выглядел
+        # бы как одновременная смерть десятка камер.
+        tunnels: dict[str, dict] = {}
+
+        def run(device):
+            proxy = proxies.get(device.site, "")
+            try:
+                return device, probe(device, proxy), None
+            except ProxyError as exc:
+                return device, None, str(exc)
+
         with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(devices))) as pool:
-            results = list(pool.map(probe, devices))
+            probed = list(pool.map(run, devices))
 
         checked_at = now_iso()
+        results = []
+        for device, result, proxy_error in probed:
+            if proxy_error is not None:
+                tunnels.setdefault(device.site, {"status": "down", "detail": proxy_error})
+                from device_monitor.domain.models import ProbeResult
+                result = ProbeResult(status="down", ports={p: False for p in device.ports})
+            elif proxies.get(device.site):
+                tunnels.setdefault(device.site, {"status": "up", "detail": None})
+            results.append(result)
         transitions: list[tuple[str, str]] = []
 
         with self._lock:
             fresh: dict[str, dict] = {}
-            for device, result in zip(devices, results):
+            for device, result in zip(devices, results):  # порядок сохранён
                 previous = self._state.get(device.id)
                 entry = {
                     "status": result.status,
@@ -96,6 +124,7 @@ class Monitor:
                     transitions.append((device.id, result.status))
                 fresh[device.id] = entry
             self._state = fresh
+            self._tunnels = tunnels
             self._updated_at = checked_at
 
         for device_id, status in transitions:
@@ -118,12 +147,17 @@ class Monitor:
 
     def _refresh_facts(self, devices: list[Device]) -> None:
         now = time.time()
+        # Сбор сведений идёт по HTTP через urllib, который SOCKS не умеет,
+        # поэтому проксированные точки пока пропускаем (доступность у них
+        # работает, а сведения от железа - следующий этап).
+        proxied = {s.name for s in self.storage.sites() if s.proxy}
         with self._lock:
             forced = set(self._forced)
             self._forced.clear()
             stale = [
                 d for d in devices
-                if d.id in forced or now - self._facts.get(d.id, {}).get("_at", 0) > INSPECT_TTL
+                if d.site not in proxied
+                and (d.id in forced or now - self._facts.get(d.id, {}).get("_at", 0) > INSPECT_TTL)
             ]
         if not stale:
             return

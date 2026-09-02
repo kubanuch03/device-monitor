@@ -1,13 +1,50 @@
-# Данные у каждого свои — в репозитории только пример.
+# ─── Данные и секреты (специфика Device Monitor) ─────────────────────────
+# База с устройствами, учётками и историей — у каждого своя, в репозитории
+# только data/devices.example.json как образец.
 /data/monitor.db
 /data/monitor.db-*
+/data/*.sqlite
+/data/*.sqlite3
 /data/devices.json
 /data/devices.json.migrated
 /data/*.tmp
+/data/*.bak
 
-# Пароль панели
+# Пароль панели и любые локальные окружения
 .env
+.env.*
+!.env.example
 
+# ─── Python ──────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Виртуальные окружения
 .venv/
+venv/
+env/
+ENV/
+
+# Кэши инструментов
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ─── Редакторы и ОС ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─── Логи ────────────────────────────────────────────────────────────────
+*.log

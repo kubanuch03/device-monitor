@@ -156,8 +156,12 @@ function screenHead(title, subtitle, note, action) {
   return head;
 }
 
-function groupTile({ title, items, note, onOpen, openLabel }) {
-  const status = statusOf(items);
+function groupTile({ title, items, note, onOpen, openLabel, tunnel }) {
+  // Если туннель точки лёг, статусы устройств недостоверны (все down не потому
+  // что упали, а потому что до них нет связи) — показываем это состояние точки,
+  // а не мнимую массовую смерть.
+  const tunnelDown = tunnel === "down";
+  const status = tunnelDown ? "down" : statusOf(items);
   const tile = document.createElement("button");
   tile.type = "button";
   tile.className = `site-tile ${status}`;
@@ -170,8 +174,15 @@ function groupTile({ title, items, note, onOpen, openLabel }) {
   name.textContent = title;
   const badge = document.createElement("span");
   badge.className = `state ${status}`;
-  badge.textContent = badgeLabel(items);
+  badge.textContent = tunnelDown ? "нет связи с туннелем" : badgeLabel(items);
   head.append(name, badge);
+  if (tunnel && !tunnelDown) {
+    const t = document.createElement("span");
+    t.className = "tunnel-tag";
+    t.textContent = "через туннель";
+    t.title = "Проверка идёт через SOCKS-туннель объекта";
+    name.after(t);
+  }
 
   const count = document.createElement("div");
   count.className = "site-tile-count";
@@ -321,11 +332,13 @@ function renderSitesScreen() {
   const grid = document.createElement("div");
   grid.className = "site-grid";
   siteNames().forEach((site) => {
+    const meta = siteInfo(site);
     grid.append(
       groupTile({
         title: site,
         items: devicesOf(site, null),
-        note: siteInfo(site).note,
+        note: meta.note,
+        tunnel: meta.proxy ? (meta.tunnel || "unknown") : null,
         openLabel: "Открыть точку →",
         onOpen: () => goTo(site, null),
       })
@@ -346,10 +359,18 @@ function renderCategoriesScreen(site) {
   settings.textContent = "Настроить точку";
   settings.onclick = () => openGroupEditor("site", site);
 
+  const meta = siteInfo(site);
   els.view.append(
     crumb("← Все точки", () => goTo(null)),
-    screenHead(site, `${countLabel(all)} · ${badgeLabel(all)}`, siteInfo(site).note, settings)
+    screenHead(site, `${countLabel(all)} · ${badgeLabel(all)}`, meta.note, settings)
   );
+  if (meta.proxy && meta.tunnel === "down") {
+    const warn = document.createElement("div");
+    warn.className = "alert";
+    warn.textContent = "Нет связи с туннелем объекта — статусы устройств недостоверны. "
+      + (meta.tunnel_detail || "Проверьте, что SSH-туннель поднят.");
+    els.view.append(warn);
+  }
 
   const grid = document.createElement("div");
   grid.className = "site-grid";
@@ -548,9 +569,12 @@ function openGroupEditor(kind, name, site) {
 
   const info = name
     ? isSite ? siteInfo(name) : categoryInfo(site, name)
-    : { name: "", note: "" };
+    : { name: "", note: "", proxy: "" };
   groupForm.name.value = info.name;
   groupForm.note.value = info.note || "";
+  // Прокси — только у точки; для категории поле прячем.
+  document.getElementById("g-proxy-field").hidden = !isSite;
+  groupForm.proxy.value = isSite ? (info.proxy || "") : "";
   groupDelete.hidden = !name;
   groupDelete.textContent = isSite ? "Удалить точку" : "Удалить категорию";
   groupError.hidden = true;
@@ -560,8 +584,9 @@ function openGroupEditor(kind, name, site) {
 
 groupForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const payload = { name: groupForm.name.value, note: groupForm.note.value };
   const isSite = groupKind === "site";
+  const payload = { name: groupForm.name.value, note: groupForm.note.value };
+  if (isSite) payload.proxy = groupForm.proxy.value;
   try {
     let result;
     if (isSite) {

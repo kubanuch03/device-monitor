@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from device_monitor.config import AUTH_ENABLED
 from device_monitor.domain.errors import ValidationError
 from device_monitor.domain.models import Device
+from device_monitor.probing.socks import ProxyError, parse_proxy
 from device_monitor.security import obfuscate
 
 HOST_RE = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
@@ -94,8 +95,15 @@ def clean_name(payload: dict, limit: int, what: str) -> tuple[str, str]:
     return name, note
 
 
-def clean_site(payload: dict) -> tuple[str, str]:
-    return clean_name(payload, 120, "точки")
+def clean_site(payload: dict) -> tuple[str, str, str]:
+    name, note = clean_name(payload, 120, "точки")
+    proxy = CONTROL_RE.sub("", str(payload.get("proxy") or "").strip())[:200]
+    if proxy:
+        try:
+            parse_proxy(proxy)  # проверяем формат socks5://host:port
+        except ProxyError as exc:
+            raise ValidationError(f"Прокси: {exc}")
+    return name, note, proxy
 
 
 def clean_category(payload: dict) -> tuple[str, str]:

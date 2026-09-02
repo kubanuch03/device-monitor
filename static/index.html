@@ -125,6 +125,12 @@
       <input id="g-note" name="note" placeholder="Адрес, подсеть, кто отвечает" autocomplete="off">
     </div>
 
+    <div class="field" id="g-proxy-field" hidden>
+      <label for="g-proxy">SOCKS-прокси точки</label>
+      <input id="g-proxy" name="proxy" placeholder="socks5://127.0.0.1:1080" autocomplete="off" spellcheck="false">
+      <p class="hint">Для объектов без прямого маршрута — через SSH-туннель <code>ssh -D</code>. Пусто = прямой доступ.</p>
+    </div>
+
     <p class="form-error" id="group-form-error" hidden></p>
 
     <div class="editor-actions">
