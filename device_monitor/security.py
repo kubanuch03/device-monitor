@@ -21,16 +21,32 @@ import secrets
 import threading
 import time
 
-from device_monitor.config import PASSWORD, SESSION_TTL
+from device_monitor.config import SESSION_TTL
+
+# Пароль ВХОДА в панель хранится необратимым хешем (в отличие от паролей
+# устройств, которые обратимы — они нужны для digest-логина на камеру).
+# pbkdf2-hmac-sha256 из стандартной библиотеки, со случайной солью.
+_PBKDF2_ROUNDS = 200_000
 
 
-def password_matches(candidate: str) -> bool:
-    # Сравнение по хешу и в постоянное время: наивное `==` на строках
-    # завершается на первом несовпавшем символе и по времени ответа выдаёт,
-    # сколько символов угадано.
-    left = hashlib.sha256(candidate.encode("utf-8")).digest()
-    right = hashlib.sha256(PASSWORD.encode("utf-8")).digest()
-    return hmac.compare_digest(left, right)
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ROUNDS)
+    return f"pbkdf2${_PBKDF2_ROUNDS}${salt.hex()}${dk.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        algo, rounds, salt_hex, dk_hex = stored.split("$")
+        if algo != "pbkdf2":
+            return False
+        dk = hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), int(rounds)
+        )
+        # Сравнение в постоянное время — не выдаёт по таймингу, сколько угадано.
+        return hmac.compare_digest(dk.hex(), dk_hex)
+    except (ValueError, AttributeError):
+        return False
 
 
 def obfuscate(value: str) -> str:

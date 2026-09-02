@@ -7,7 +7,22 @@ def test_auth_required(client):
 
 
 def test_login_wrong_password(client):
-    assert client.post("/api/v1/login", json={"password": "nope"}).status_code == 401
+    assert client.post("/api/v1/login", json={"username": "admin", "password": "nope"}).status_code == 401
+
+
+def test_login_wrong_username(client):
+    assert client.post("/api/v1/login", json={"username": "nope", "password": "test-secret"}).status_code == 401
+
+
+def test_change_account(auth):
+    # неверный текущий пароль — отказ
+    assert auth.post("/api/v1/account", json={"current_password": "wrong", "new_password": "brandnew1"}).status_code == 403
+    # смена пароля
+    assert auth.post("/api/v1/account", json={"current_password": "test-secret", "new_password": "brandnew1"}).status_code == 200
+    # старый больше не работает, новый работает
+    fresh = auth
+    assert fresh.post("/api/v1/login", json={"username": "admin", "password": "test-secret"}).status_code == 401
+    assert fresh.post("/api/v1/login", json={"username": "admin", "password": "brandnew1"}).status_code == 200
 
 
 def test_site_category_device_flow(auth):

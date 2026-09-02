@@ -8,6 +8,7 @@ from pathlib import Path
 from device_monitor import config
 from device_monitor.domain.models import Device
 from device_monitor.probing.monitor import Monitor
+from device_monitor.security import hash_password
 from device_monitor.storage.sqlalchemy_store import SqlAlchemyStorage
 
 
@@ -15,6 +16,19 @@ class App:
     def __init__(self, storage=None):
         self.storage = storage or SqlAlchemyStorage(config.DB_PATH)
         self.monitor = Monitor(self.storage)
+        self._ensure_default_user()
+
+    def _ensure_default_user(self) -> None:
+        """При первом запуске создаёт дефолтную учётку из config.
+
+        Пароль сразу хешируется и в открытом виде нигде не оседает. Дефолт —
+        для первого входа; в публичном репозитории он не секрет, сменить через
+        интерфейс после входа (или задать своим через DM_DEFAULT_PASSWORD).
+        """
+        if self.storage.get_user() is None:
+            self.storage.set_user(
+                config.DEFAULT_USERNAME, hash_password(config.DEFAULT_PASSWORD)
+            )
 
     def start(self) -> None:
         if config.MONITOR_ENABLED:

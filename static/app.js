@@ -959,6 +959,61 @@ document.getElementById("detail-inspect").onclick = async (event) => {
 document.getElementById("add").onclick = () => openEditor(null);
 document.getElementById("add-first").onclick = () => openEditor(null);
 
+// --- аккаунт: выход и смена учётки ---------------------------------------
+document.getElementById("logout").onclick = async () => {
+  try { await api("/api/v1/logout", { method: "POST" }); } catch (e) {}
+  location.href = "/";
+};
+
+const accountEditor = document.getElementById("account-editor");
+const accountForm = document.getElementById("account-form");
+const accountError = document.getElementById("account-error");
+
+document.getElementById("account").onclick = async () => {
+  accountError.hidden = true;
+  accountForm.reset();
+  accountForm.new_password.type = "password";
+  try {
+    const s = await api("/api/v1/session");
+    accountForm.username.value = s.username || "";
+    // Предупредить, если вход всё ещё под дефолтным паролем публичного репо.
+    document.getElementById("account-warn").textContent =
+      "Панель хранит доступы к оборудованию — держите пароль надёжным и не дефолтным.";
+  } catch (e) {}
+  accountEditor.showModal();
+};
+
+document.getElementById("account-cancel").onclick = () => accountEditor.close();
+
+// глаз для нового пароля в форме аккаунта
+const aEye = document.getElementById("a-new-eye");
+if (aEye) {
+  aEye.innerHTML = EYE;
+  aEye.onclick = () => {
+    const f = accountForm.new_password;
+    const shown = f.type === "text";
+    f.type = shown ? "password" : "text";
+    aEye.innerHTML = shown ? EYE : EYE_OFF;
+  };
+}
+
+accountForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = { current_password: accountForm.current_password.value };
+  if (accountForm.username.value) payload.username = accountForm.username.value;
+  if (accountForm.new_password.value) payload.new_password = accountForm.new_password.value;
+  try {
+    await api("/api/v1/account", { method: "POST", body: JSON.stringify(payload) });
+    accountEditor.close();
+    showAlert("");
+    // Смена логина/пароля не рвёт текущую сессию, но освежим на всякий случай.
+    await refresh();
+  } catch (error) {
+    accountError.textContent = error.message;
+    accountError.hidden = false;
+  }
+});
+
 document.getElementById("recheck").onclick = async (event) => {
   const button = event.currentTarget;
   button.disabled = true;

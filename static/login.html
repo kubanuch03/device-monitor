@@ -12,11 +12,15 @@
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">Device Monitor</span>
     </div>
-    <p class="login-hint">Панель хранит учётные данные оборудования, поэтому закрыта паролем.</p>
+    <p class="login-hint">Панель хранит учётные данные оборудования, поэтому закрыта входом.</p>
 
     <div class="field">
-      <label for="password">Пароль панели</label>
-      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <label for="username">Логин</label>
+      <input id="username" name="username" type="text" autocomplete="username" required autofocus value="admin">
+    </div>
+    <div class="field">
+      <label for="password">Пароль</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
     </div>
 
     <p class="form-error" id="login-error" hidden></p>
@@ -38,7 +42,7 @@ form.addEventListener("submit", async (event) => {
     const response = await fetch("/api/v1/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: form.password.value }),
+      body: JSON.stringify({ username: form.username.value, password: form.password.value }),
     });
     if (response.ok) {
       location.replace("/");

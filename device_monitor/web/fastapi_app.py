@@ -19,9 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from device_monitor import config
 from device_monitor.app import App, migrate_json
 from device_monitor.domain.errors import ConflictError, ValidationError
-from device_monitor.security import SESSIONS, password_matches
+from device_monitor.security import SESSIONS, hash_password, verify_password
 from device_monitor.web import api
-from device_monitor.web.schemas import CategoryIn, DeviceIn, LoginIn, SiteIn
+from device_monitor.web.schemas import AccountIn, CategoryIn, DeviceIn, LoginIn, SiteIn
 
 APP_STATE: dict = {}
 
@@ -85,18 +85,43 @@ def _set_cookie(response: Response, token: str | None) -> None:
 @app.get("/api/v1/session")
 def session(request: Request):
     token = request.cookies.get(config.SESSION_COOKIE)
-    return {"auth_required": config.AUTH_ENABLED, "authenticated": SESSIONS.valid(token) or not config.AUTH_ENABLED}
+    authed = SESSIONS.valid(token)
+    user = core().storage.get_user() if authed else None
+    return {
+        "auth_required": True,
+        "authenticated": authed,
+        "username": user["username"] if user else None,
+    }
 
 
 @app.post("/api/v1/login")
 def login(body: LoginIn, response: Response):
-    if not config.AUTH_ENABLED:
-        raise HTTPException(status_code=400, detail="Вход не настроен")
-    if not password_matches(body.password):
-        time.sleep(1)  # тормозим перебор
-        raise HTTPException(status_code=401, detail="Неверный пароль")
+    user = core().storage.get_user()
+    # Логин сверяем без учёта регистра, пароль — по хешу. Оба неверных случая
+    # (нет такого логина / неверный пароль) отвечают одинаково и с задержкой,
+    # чтобы не подсказывать перебору, что именно не так.
+    ok = bool(user) and user["username"].casefold() == body.username.strip().casefold() \
+        and verify_password(body.password, user["password_hash"])
+    if not ok:
+        time.sleep(1)
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     _set_cookie(response, SESSIONS.create())
     return {"ok": True}
+
+
+@app.post("/api/v1/account", dependencies=[Depends(require_auth)])
+def change_account(body: AccountIn, request: Request):
+    """Смена логина и/или пароля. Требует текущий пароль."""
+    user = core().storage.get_user()
+    if not user or not verify_password(body.current_password, user["password_hash"]):
+        time.sleep(1)
+        raise HTTPException(status_code=403, detail="Текущий пароль неверен")
+    new_username = (body.username or user["username"]).strip()
+    if not new_username:
+        raise HTTPException(status_code=400, detail="Логин не может быть пустым")
+    new_hash = hash_password(body.new_password) if body.new_password else user["password_hash"]
+    core().storage.set_user(new_username, new_hash)
+    return {"ok": True, "username": new_username}
 
 
 @app.post("/api/v1/logout")

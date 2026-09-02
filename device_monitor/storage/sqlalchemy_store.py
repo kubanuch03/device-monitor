@@ -70,6 +70,15 @@ class StatusEventRow(Base):
     at: Mapped[str] = mapped_column(String(40))
 
 
+class UserRow(Base):
+    """Учётная запись входа в панель. Одна на сервис (админ), но таблица —
+    на случай будущих ролей. Пароль хранится необратимым хешем."""
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(120), unique=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+
+
 Index("idx_events_device_at", StatusEventRow.device_id, StatusEventRow.at)
 
 
@@ -340,6 +349,21 @@ class SqlAlchemyStorage:
             "outages": outages,
             "events": len(events),
         }
+
+    # -- учётная запись входа --------------------------------------------------
+
+    def get_user(self) -> dict | None:
+        """Единственная (админская) учётка или None, если ещё не создана."""
+        with self._lock, Session(self._engine) as s:
+            row = s.scalars(select(UserRow).order_by(UserRow.id).limit(1)).first()
+            return {"username": row.username, "password_hash": row.password_hash} if row else None
+
+    def set_user(self, username: str, password_hash: str) -> None:
+        """Создаёт или заменяет единственную учётку (смена логина/пароля)."""
+        with self._lock, Session(self._engine) as s:
+            s.execute(delete(UserRow))
+            s.add(UserRow(username=username, password_hash=password_hash))
+            s.commit()
 
     def prune_history(self, days: int) -> int:
         cutoff = (_now() - timedelta(days=days)).isoformat(timespec="seconds")

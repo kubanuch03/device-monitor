@@ -70,4 +70,12 @@ class DeviceIn(BaseModel):
 
 
 class LoginIn(BaseModel):
+    username: str = ""
     password: str = ""
+
+
+class AccountIn(BaseModel):
+    """Смена учётки входа: нужен текущий пароль, новые логин и/или пароль."""
+    current_password: str
+    username: str | None = Field(default=None, max_length=120)
+    new_password: str | None = Field(default=None, min_length=6, max_length=200)

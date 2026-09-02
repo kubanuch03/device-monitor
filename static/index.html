@@ -19,6 +19,8 @@
       <span class="updated" id="updated"></span>
       <button type="button" id="recheck">Проверить сейчас</button>
       <button type="button" class="primary" id="add">Добавить устройство</button>
+      <button type="button" id="account" title="Учётная запись">Аккаунт</button>
+      <button type="button" id="logout" title="Выйти">Выйти</button>
     </div>
   </div>
 </header>
@@ -164,6 +166,35 @@
     <span class="spacer"></span>
     <button type="button" id="detail-close">Закрыть</button>
   </div>
+</dialog>
+
+<dialog id="account-editor">
+  <form method="dialog" id="account-form">
+    <h2>Учётная запись</h2>
+    <p class="hint" id="account-warn"></p>
+    <div class="field">
+      <label for="a-username">Логин</label>
+      <input id="a-username" name="username" autocomplete="username">
+    </div>
+    <div class="field">
+      <label for="a-new">Новый пароль</label>
+      <div class="pw-wrap">
+        <input id="a-new" name="new_password" type="password" placeholder="оставьте пустым — не менять" autocomplete="new-password">
+        <button type="button" id="a-new-eye" class="pw-eye" aria-label="Показать пароль"></button>
+      </div>
+      <p class="hint">Не короче 6 символов.</p>
+    </div>
+    <div class="field">
+      <label for="a-current">Текущий пароль (для подтверждения)</label>
+      <input id="a-current" name="current_password" type="password" required autocomplete="current-password">
+    </div>
+    <p class="form-error" id="account-error" hidden></p>
+    <div class="editor-actions">
+      <span class="spacer"></span>
+      <button type="button" id="account-cancel">Отмена</button>
+      <button type="submit" class="primary">Сохранить</button>
+    </div>
+  </form>
 </dialog>
 
 <script src="/static/app.js"></script>
