@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 import json
-import threading
 from pathlib import Path
 
 from device_monitor import config
 from device_monitor.domain.models import Device
 from device_monitor.probing.monitor import Monitor
-from device_monitor.storage.sqlite import SqliteStorage
+from device_monitor.storage.sqlalchemy_store import SqlAlchemyStorage
 
 
 class App:
     def __init__(self, storage=None):
-        self.storage = storage or SqliteStorage(config.DB_PATH)
+        self.storage = storage or SqlAlchemyStorage(config.DB_PATH)
         self.monitor = Monitor(self.storage)
 
     def start(self) -> None:
-        threading.Thread(target=self.monitor.loop, name="monitor", daemon=True).start()
+        if config.MONITOR_ENABLED:
+            self.monitor.start()
 
     def stop(self) -> None:
         self.monitor.stop()

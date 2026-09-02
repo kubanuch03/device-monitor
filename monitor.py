@@ -13,16 +13,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import uvicorn
+
 from device_monitor import config
-from device_monitor.app import App, migrate_json
-from device_monitor.web.server import serve
 
 
 def main() -> None:
-    app = App()
-    migrate_json(app.storage, config.LEGACY_JSON)
-    app.start()
-    serve(app)
+    # Приложение (хранилище + фоновый опрос) поднимается в lifespan FastAPI —
+    # см. device_monitor/web/fastapi_app.py. Здесь только запуск ASGI-сервера.
+    uvicorn.run(
+        "device_monitor.web.fastapi_app:app",
+        host=config.HOST,
+        port=config.PORT,
+        log_level="warning",
+    )
 
 
 if __name__ == "__main__":

@@ -315,7 +315,7 @@ function deviceCard(device) {
   remove.onclick = async () => {
     if (!confirm(`Удалить «${device.name}» из списка?`)) return;
     try {
-      await api(`/api/devices/${device.id}`, { method: "DELETE" });
+      await api(`/api/v1/devices/${device.id}`, { method: "DELETE" });
       await refresh();
     } catch (error) {
       showAlert(error.message);
@@ -568,7 +568,7 @@ function render() {
 
 async function refresh() {
   try {
-    state = await api("/api/state");
+    state = await api("/api/v1/state");
     showAlert("");
     render();
     schedule();
@@ -637,17 +637,17 @@ groupForm.addEventListener("submit", async (event) => {
     let result;
     if (isSite) {
       result = groupOriginal
-        ? await api(`/api/sites/${encodeURIComponent(groupOriginal)}`, {
+        ? await api(`/api/v1/sites/${encodeURIComponent(groupOriginal)}`, {
             method: "PUT", body: JSON.stringify(payload),
           })
-        : await api("/api/sites", { method: "POST", body: JSON.stringify(payload) });
+        : await api("/api/v1/sites", { method: "POST", body: JSON.stringify(payload) });
     } else {
       result = groupOriginal
         ? await api(
-            `/api/categories/${encodeURIComponent(groupSite)}/${encodeURIComponent(groupOriginal)}`,
+            `/api/v1/categories/${encodeURIComponent(groupSite)}/${encodeURIComponent(groupOriginal)}`,
             { method: "PUT", body: JSON.stringify(payload) }
           )
-        : await api("/api/categories", {
+        : await api("/api/v1/categories", {
             method: "POST", body: JSON.stringify({ ...payload, site: groupSite }),
           });
     }
@@ -671,8 +671,8 @@ groupDelete.onclick = async () => {
   try {
     await api(
       isSite
-        ? `/api/sites/${encodeURIComponent(groupOriginal)}`
-        : `/api/categories/${encodeURIComponent(groupSite)}/${encodeURIComponent(groupOriginal)}`,
+        ? `/api/v1/sites/${encodeURIComponent(groupOriginal)}`
+        : `/api/v1/categories/${encodeURIComponent(groupSite)}/${encodeURIComponent(groupOriginal)}`,
       { method: "DELETE" }
     );
     groupEditor.close();
@@ -691,8 +691,11 @@ document.getElementById("group-cancel").onclick = () => groupEditor.close();
 // редактор устройства
 // ---------------------------------------------------------------------------
 
+let editingHasPassword = false;
+
 function openEditor(device, preset, asCopy) {
   editingId = asCopy ? null : device ? device.id : null;
+  editingHasPassword = !!(device && device.has_password) && !asCopy;
   els.title.textContent = asCopy
     ? "Копия устройства"
     : device ? "Настройки устройства" : "Новое устройство";
@@ -716,9 +719,9 @@ function openEditor(device, preset, asCopy) {
   els.form.password.type = "password";
   if (pwEye) pwEye.innerHTML = EYE;
   const hasPass = !!(device && device.has_password) && !asCopy;
-  els.form.password.placeholder = hasPass ? "сохранён — пусто = не менять" : "";
+  els.form.password.placeholder = hasPass ? "нажмите глаз, чтобы показать сохранённый" : "";
   document.getElementById("f-password-hint").textContent = hasPass
-    ? "Оставьте пустым, чтобы не менять. Введите новый — чтобы заменить."
+    ? "Пароль сохранён. Глаз — показать текущий; впишите другой — заменить; оставите пустым — не изменится."
     : "Нужен для сбора сведений с устройства (модель, серийник, прошивку).";
   els.form.note.value = device ? device.note || "" : "";
   els.formError.hidden = true;
@@ -746,8 +749,8 @@ els.form.addEventListener("submit", async (event) => {
   if (els.form.password.value) payload.password = els.form.password.value;
   try {
     const result = editingId
-      ? await api(`/api/devices/${editingId}`, { method: "PUT", body: JSON.stringify(payload) })
-      : await api("/api/devices", { method: "POST", body: JSON.stringify(payload) });
+      ? await api(`/api/v1/devices/${editingId}`, { method: "PUT", body: JSON.stringify(payload) })
+      : await api("/api/v1/devices", { method: "POST", body: JSON.stringify(payload) });
     els.editor.close();
     await refresh();
     // Устройство могло уехать в другую точку или категорию - показываем там,
@@ -770,9 +773,25 @@ const EYE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke=
 const EYE_OFF = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.9 4.2A11 11 0 0 1 12 4c7 0 11 7 11 7a18 18 0 0 1-3 3.5M6.6 6.6A18 18 0 0 0 1 12s4 7 11 7a11 11 0 0 0 4-.7"/><path d="m3 3 18 18"/></svg>';
 const pwEye = document.getElementById("f-password-eye");
 pwEye.innerHTML = EYE;
-pwEye.onclick = () => {
-  const shown = els.form.password.type === "text";
-  els.form.password.type = shown ? "password" : "text";
+pwEye.onclick = async () => {
+  const field = els.form.password;
+  // Поле пустое, но у устройства пароль сохранён — глаз его подгружает и
+  // показывает (через отдельный эндпоинт /secret, залогиненному). Дальше
+  // просто переключает видимость.
+  if (!field.value && editingHasPassword && editingId) {
+    pwEye.disabled = true;
+    try {
+      const data = await api(`/api/v1/devices/${editingId}/secret`);
+      field.value = data.password || "";
+    } catch (error) {
+      showAlert(error.message);
+      pwEye.disabled = false;
+      return;
+    }
+    pwEye.disabled = false;
+  }
+  const shown = field.type === "text";
+  field.type = shown ? "password" : "text";
   pwEye.innerHTML = shown ? EYE : EYE_OFF;
   pwEye.title = shown ? "Показать пароль" : "Скрыть пароль";
   pwEye.setAttribute("aria-label", pwEye.title);
@@ -886,7 +905,7 @@ async function renderDetail() {
 
   // История доступности
   try {
-    const data = await api(`/api/devices/${device.id}/history`);
+    const data = await api(`/api/v1/devices/${device.id}/history`);
     const up = data.uptime || {};
     const stat = document.createElement("div");
     stat.className = "uptime";
@@ -926,7 +945,7 @@ document.getElementById("detail-inspect").onclick = async (event) => {
   button.disabled = true;
   button.textContent = "Опрашиваю…";
   try {
-    await api(`/api/devices/${detailId}/inspect`, { method: "POST" });
+    await api(`/api/v1/devices/${detailId}/inspect`, { method: "POST" });
     // Опрос сведений идёт в фоне и занимает несколько секунд - ждём круг,
     // затем перечитываем состояние и перерисовываем карточку.
     setTimeout(async () => { await refresh(); await renderDetail(); }, 2500);
@@ -945,7 +964,7 @@ document.getElementById("recheck").onclick = async (event) => {
   button.disabled = true;
   button.textContent = "Проверяю…";
   try {
-    await api("/api/recheck", { method: "POST" });
+    await api("/api/v1/recheck", { method: "POST" });
     // Опрос будится сразу, но самим проверкам нужно время на таймауты
     // мёртвых адресов - иначе перерисуем ещё старое состояние.
     setTimeout(refresh, 1500);

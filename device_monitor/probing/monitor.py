@@ -36,6 +36,7 @@ class Monitor:
         self._updated_at: str | None = None
         self._wake = threading.Event()
         self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
         self._last_prune = 0.0
 
     # -- состояние -------------------------------------------------------------
@@ -62,13 +63,23 @@ class Monitor:
         with self._lock:
             self._forced.add(device_id)
 
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self.loop, name="monitor", daemon=True)
+        self._thread.start()
+
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
+        # Дожидаемся завершения цикла, иначе фоновый поток продолжит опрос уже
+        # на гаснущем интерпретаторе и сыпет «futures after interpreter shutdown».
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2)
 
     # -- круг опроса ------------------------------------------------------------
 
     def run_once(self) -> None:
+        if self._stop.is_set():
+            return
         devices = self.storage.devices()
         proxies = {s.name: s.proxy for s in self.storage.sites()}
         if not devices:
