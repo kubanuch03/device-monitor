@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Видео — Device Monitor</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="streams-body">
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name" id="s-title">Видео</span>
+    </div>
+    <div class="summary" id="s-sub"></div>
+    <div class="topbar-actions">
+      <label class="cols-pick">сетка
+        <select id="s-cols">
+          <option value="1">1</option>
+          <option value="2" selected>2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select>
+      </label>
+      <button type="button" id="s-reload">Перезапустить потоки</button>
+      <button type="button" id="s-back">← К дашборду</button>
+    </div>
+  </div>
+</header>
+
+<main class="page">
+  <div id="s-alert" class="alert" hidden></div>
+  <div id="s-grid" class="stream-grid"></div>
+</main>
+
+<script src="/static/streams.js"></script>
+</body>
+</html>

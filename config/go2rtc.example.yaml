@@ -1,0 +1,38 @@
+# Потоки для просмотра камер из дашборда Device Monitor.
+#
+# Зачем локальный go2rtc: браузер не умеет RTSP. Поток обязан переупаковать
+# медиасервер. На Балыкчы go2rtc уже стоит на самом объекте и используется
+# напрямую; у Ала-Арчи и Кызыл-Кия его нет и поставить некуда — за них
+# отдувается этот, локальный, забирая RTSP через VPN.
+#
+# ВНИМАНИЕ: файл содержит пароли камер. Права 600, в .gitignore.
+# Шаблон без паролей — config/go2rtc.example.yaml.
+
+api:
+  listen: "127.0.0.1:1984"   # только локально: наружу отдавать нечего и опасно
+
+log:
+  level: info
+
+streams:
+  # ── ТЦ Ала-Арча — Dahua ITC413, учётки из ALA_ARCHA_CAMERA_* на сервере объекта
+  archa_entry1: rtsp://admin:ПАРОЛЬ@10.30.205.66:554/cam/realmonitor?channel=1&subtype=0
+  archa_entry2: rtsp://admin:ПАРОЛЬ@10.30.205.24:554/cam/realmonitor?channel=1&subtype=0
+  archa_exit1:  rtsp://admin:ПАРОЛЬ@10.30.205.68:554/cam/realmonitor?channel=1&subtype=0
+  archa_exit2:  rtsp://admin:ПАРОЛЬ@10.30.205.67:554/cam/realmonitor?channel=1&subtype=0
+
+  # ── МТО Кызыл-Кия. Вендор не определён: объект недоступен, опросить нечего.
+  # Поэтому у каждой камеры два источника — Dahua-путь и Hikvision-путь.
+  # go2rtc пробует их по очереди и берёт тот, что ответит.
+  kyzyl_entrance:
+    - rtsp://admin:ПАРОЛЬ@192.168.158.5:554/cam/realmonitor?channel=1&subtype=0
+    - rtsp://admin:ПАРОЛЬ@192.168.158.5:554/Streaming/Channels/101
+  kyzyl_exit:
+    - rtsp://admin:ПАРОЛЬ@192.168.158.6:554/cam/realmonitor?channel=1&subtype=0
+    - rtsp://admin:ПАРОЛЬ@192.168.158.6:554/Streaming/Channels/101
+  kyzyl_checkpoint_entrance:
+    - rtsp://admin:ПАРОЛЬ@192.168.158.17:554/cam/realmonitor?channel=1&subtype=0
+    - rtsp://admin:ПАРОЛЬ@192.168.158.17:554/Streaming/Channels/101
+  kyzyl_checkpoint_exit:
+    - rtsp://admin:ПАРОЛЬ@192.168.158.18:554/cam/realmonitor?channel=1&subtype=0
+    - rtsp://admin:ПАРОЛЬ@192.168.158.18:554/Streaming/Channels/101

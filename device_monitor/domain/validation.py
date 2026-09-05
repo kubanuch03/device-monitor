@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from device_monitor.config import AUTH_ENABLED
 from device_monitor.domain.errors import ValidationError
-from device_monitor.domain.models import Device
+from device_monitor.domain.models import Device, Site
 from device_monitor.probing.socks import ProxyError, parse_proxy
 from device_monitor.security import obfuscate
 
@@ -95,15 +95,43 @@ def clean_name(payload: dict, limit: int, what: str) -> tuple[str, str]:
     return name, note
 
 
-def clean_site(payload: dict) -> tuple[str, str, str]:
+def clean_site(payload: dict, existing: Site | None = None) -> Site:
     name, note = clean_name(payload, 120, "точки")
     proxy = CONTROL_RE.sub("", str(payload.get("proxy") or "").strip())[:200]
+    stream_base = CONTROL_RE.sub("", str(payload.get("stream_base") or "").strip())[:200].rstrip("/")
+    if stream_base and not stream_base.startswith(("http://", "https://")):
+        raise ValidationError("Адрес go2rtc должен начинаться с http:// или https://")
     if proxy:
         try:
             parse_proxy(proxy)  # проверяем формат socks5://host:port
         except ProxyError as exc:
             raise ValidationError(f"Прокси: {exc}")
-    return name, note, proxy
+    username = str(payload.get("username", existing.username if existing else "")).strip()[:120]
+    password_enc = clean_password(payload.get("password"),
+                                  existing.password_enc if existing else "")
+    return Site(name=name, note=note, proxy=proxy, stream_base=stream_base,
+                username=username, password_enc=password_enc)
+
+
+def clean_password(raw, current: str) -> str:
+    """Что делать с полем пароля в форме.
+
+    Три случая, и различать их обязательно: пусто - «оставить как было»
+    (наружу пароль не отдаётся, и форма его попросту не знает, поэтому правка
+    соседнего поля не должна стирать учётку); False - «убрать»; всё остальное -
+    новый пароль. Общая функция, потому что теперь пароль есть и у устройства,
+    и у точки, а правило должно быть одно.
+    """
+    if raw is None or raw == "":
+        return current
+    if raw is False:
+        return ""
+    if not AUTH_ENABLED:
+        raise ValidationError(
+            "Пароли устройств нельзя хранить, пока панель без входа. "
+            "Задайте DM_PASSWORD и перезапустите сервис."
+        )
+    return obfuscate(str(raw)[:200])
 
 
 def clean_category(payload: dict) -> tuple[str, str]:
@@ -154,21 +182,19 @@ def clean_device(payload: dict, existing: Device | None = None) -> Device:
 
     username = str(payload.get("username", base("username", ""))).strip()[:120]
 
-    # Пароль приходит только при изменении: пустое поле означает «оставить как
-    # было», иначе правка любого другого поля стирала бы учётку - наружу
-    # пароль не отдаётся, и форма его не знает.
-    raw_password = payload.get("password")
-    if raw_password is None or raw_password == "":
-        password_enc = base("password_enc", "")
-    elif raw_password is False:
-        password_enc = ""
-    else:
-        if not AUTH_ENABLED:
-            raise ValidationError(
-                "Пароли устройств нельзя хранить, пока панель без входа. "
-                "Задайте DM_PASSWORD и перезапустите сервис."
-            )
-        password_enc = obfuscate(str(raw_password)[:200])
+    open_url = CONTROL_RE.sub("", str(payload.get("open_url", base("open_url", "")) or "").strip())[:300]
+    if open_url and not open_url.startswith(("http://", "https://")):
+        raise ValidationError("Адрес для открытия должен начинаться с http:// или https://")
+
+    stream_name = CONTROL_RE.sub("", str(payload.get("stream_name", base("stream_name", "")) or "").strip())[:120]
+
+    password_enc = clean_password(payload.get("password"), base("password_enc", ""))
+
+    # Наследование учётки точки включается только явным флагом. Само по себе
+    # отсутствие пароля у устройства его не включает: пароль от камер не должен
+    # уезжать на роутер и коммутаторы, где он всё равно не подойдёт.
+    raw_inherit = payload.get("use_site_creds", base("use_site_creds", False))
+    use_site_creds = raw_inherit if isinstance(raw_inherit, bool) else str(raw_inherit) == "true"
 
     return Device(
         id=base("id") or uuid.uuid4().hex,
@@ -183,4 +209,7 @@ def clean_device(payload: dict, existing: Device | None = None) -> Device:
         username=username,
         password_enc=password_enc,
         note=note,
+        open_url=open_url,
+        stream_name=stream_name,
+        use_site_creds=use_site_creds,
     )

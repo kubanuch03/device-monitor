@@ -22,7 +22,10 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS sites (
     name TEXT PRIMARY KEY,
     note TEXT NOT NULL DEFAULT '',
-    proxy TEXT NOT NULL DEFAULT ''
+    proxy TEXT NOT NULL DEFAULT '',
+    stream_base TEXT NOT NULL DEFAULT '',
+    username TEXT NOT NULL DEFAULT '',
+    password_enc TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -44,7 +47,10 @@ CREATE TABLE IF NOT EXISTS devices (
     path         TEXT NOT NULL DEFAULT '/',
     username     TEXT NOT NULL DEFAULT '',
     password_enc TEXT NOT NULL DEFAULT '',
-    note         TEXT NOT NULL DEFAULT ''
+    note         TEXT NOT NULL DEFAULT '',
+    open_url     TEXT NOT NULL DEFAULT '',
+    stream_name  TEXT NOT NULL DEFAULT '',
+    use_site_creds INTEGER NOT NULL DEFAULT 0
 );
 
 -- В таблицу пишутся только СМЕНЫ состояния, а не каждый круг опроса. Иначе
@@ -83,11 +89,48 @@ class SqliteStorage:
             cols = {r["name"] for r in self._db.execute("PRAGMA table_info(sites)")}
             if "proxy" not in cols:
                 self._db.execute("ALTER TABLE sites ADD COLUMN proxy TEXT NOT NULL DEFAULT ''")
+            # open_url добавлен позже — на старых базах его нет.
+            dcols = {r["name"] for r in self._db.execute("PRAGMA table_info(devices)")}
+            if "open_url" not in dcols:
+                self._db.execute("ALTER TABLE devices ADD COLUMN open_url TEXT NOT NULL DEFAULT ''")
+            if "stream_name" not in dcols:
+                self._db.execute("ALTER TABLE devices ADD COLUMN stream_name TEXT NOT NULL DEFAULT ''")
+            if "stream_base" not in cols:
+                self._db.execute("ALTER TABLE sites ADD COLUMN stream_base TEXT NOT NULL DEFAULT ''")
+            # Учётка точки и признак наследования добавлены позже. Умолчания
+            # выбраны так, что старая база ведёт себя ровно как раньше: учётки
+            # у точек нет, ни одно устройство её не наследует.
+            if "username" not in cols:
+                self._db.execute("ALTER TABLE sites ADD COLUMN username TEXT NOT NULL DEFAULT ''")
+            if "password_enc" not in cols:
+                self._db.execute("ALTER TABLE sites ADD COLUMN password_enc TEXT NOT NULL DEFAULT ''")
+            if "use_site_creds" not in dcols:
+                self._db.execute(
+                    "ALTER TABLE devices ADD COLUMN use_site_creds INTEGER NOT NULL DEFAULT 0")
             self._db.commit()
-        try:
-            self.path.chmod(0o600)
-        except OSError:
-            pass
+        self._lock_down()
+
+    def _lock_down(self) -> None:
+        """Закрыть от посторонних не только базу, но и её спутников.
+
+        Права 0600 на monitor.db - половина защиты и раньше она была фиктивной:
+        SQLite в режиме WAL держит ещё monitor.db-wal и -shm, создаёт их по
+        umask (у нас вышло 0644), и свежезаписанный пароль устройства какое-то
+        время лежит именно в WAL. Плюс файлы пересоздаются при каждом открытии
+        базы, поэтому одного chmod при миграции мало - каталог обязан быть
+        закрыт сам по себе: без права входа в него содержимое недоступно
+        независимо от того, с какими правами SQLite создаст файл в следующий раз.
+        """
+        for target, mode in (
+            (self.path.parent, 0o700),
+            (self.path, 0o600),
+            (self.path.with_name(self.path.name + "-wal"), 0o600),
+            (self.path.with_name(self.path.name + "-shm"), 0o600),
+        ):
+            try:
+                target.chmod(mode)
+            except OSError:
+                pass
 
     # -- вспомогательное ------------------------------------------------------
 
@@ -116,38 +159,70 @@ class SqliteStorage:
             username=row["username"],
             password_enc=row["password_enc"],
             note=row["note"],
+            open_url=row["open_url"],
+            stream_name=row["stream_name"],
+            use_site_creds=bool(row["use_site_creds"]),
         )
 
     # -- точки ----------------------------------------------------------------
 
     def sites(self) -> list[Site]:
-        rows = self._rows("SELECT name, note, proxy FROM sites")
+        rows = self._rows(
+            "SELECT name, note, proxy, stream_base, username, password_enc FROM sites")
         return sorted(
-            (Site(r["name"], r["note"], r["proxy"]) for r in rows),
+            (self._site(r) for r in rows),
             key=lambda s: s.name.casefold(),
         )
 
-    def add_site(self, name: str, note: str, proxy: str = "") -> Site:
-        with self._lock:
-            if any(same_name(s.name, name) for s in self.sites()):
-                raise ConflictError(f"Точка «{name}» уже есть")
-            self._exec("INSERT INTO sites(name, note, proxy) VALUES (?, ?, ?)", (name, note, proxy))
-        return Site(name, note, proxy)
+    def site(self, name: str) -> Site | None:
+        rows = self._rows(
+            "SELECT name, note, proxy, stream_base, username, password_enc FROM sites"
+            " WHERE name = ?", (name,))
+        return self._site(rows[0]) if rows else None
 
-    def update_site(self, old_name: str, name: str, note: str, proxy: str = "") -> Site:
+    @staticmethod
+    def _site(row: sqlite3.Row) -> Site:
+        return Site(
+            name=row["name"],
+            note=row["note"],
+            proxy=row["proxy"],
+            stream_base=row["stream_base"],
+            username=row["username"],
+            password_enc=row["password_enc"],
+        )
+
+    def add_site(self, site: Site) -> Site:
+        # Точка передаётся объектом, а не россыпью аргументов: полей у неё уже
+        # шесть, и каждое новое иначе означало бы правку всех вызовов подряд.
+        with self._lock:
+            if any(same_name(s.name, site.name) for s in self.sites()):
+                raise ConflictError(f"Точка «{site.name}» уже есть")
+            self._exec(
+                "INSERT INTO sites(name, note, proxy, stream_base, username, password_enc)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (site.name, site.note, site.proxy, site.stream_base,
+                 site.username, site.password_enc))
+        return site
+
+    def update_site(self, old_name: str, site: Site) -> Site:
         with self._lock:
             if not self._rows("SELECT 1 FROM sites WHERE name = ?", (old_name,)):
                 raise ValidationError("Точка не найдена")
-            if not same_name(name, old_name) and any(same_name(s.name, name) for s in self.sites()):
-                raise ConflictError(f"Точка «{name}» уже есть")
+            if not same_name(site.name, old_name) and any(
+                    same_name(s.name, site.name) for s in self.sites()):
+                raise ConflictError(f"Точка «{site.name}» уже есть")
             # Переименование одной транзакцией: устройства и категории
             # ссылаются на точку по имени, и если обновить не всё сразу, часть
             # из них останется в точке, которой больше нет.
-            self._db.execute("UPDATE sites SET name = ?, note = ?, proxy = ? WHERE name = ?", (name, note, proxy, old_name))
-            self._db.execute("UPDATE categories SET site = ? WHERE site = ?", (name, old_name))
-            self._db.execute("UPDATE devices SET site = ? WHERE site = ?", (name, old_name))
+            self._db.execute(
+                "UPDATE sites SET name = ?, note = ?, proxy = ?, stream_base = ?,"
+                " username = ?, password_enc = ? WHERE name = ?",
+                (site.name, site.note, site.proxy, site.stream_base,
+                 site.username, site.password_enc, old_name))
+            self._db.execute("UPDATE categories SET site = ? WHERE site = ?", (site.name, old_name))
+            self._db.execute("UPDATE devices SET site = ? WHERE site = ?", (site.name, old_name))
             self._db.commit()
-        return Site(name, note, proxy)
+        return site
 
     def delete_site(self, name: str) -> None:
         with self._lock:
@@ -244,19 +319,23 @@ class SqliteStorage:
             device.site, device.category, device.name, device.host,
             json.dumps(list(device.ports)), device.scheme, device.web_port,
             device.path, device.username, device.password_enc, device.note,
+            device.open_url, device.stream_name, int(device.use_site_creds),
         )
         with self._lock:
             self._ensure_refs(device)
             if insert:
                 self._db.execute(
                     "INSERT INTO devices(site, category, name, host, ports, scheme, web_port,"
-                    " path, username, password_enc, note, id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " path, username, password_enc, note, open_url, stream_name,"
+                    " use_site_creds, id)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     values + (device.id,),
                 )
             else:
                 self._db.execute(
                     "UPDATE devices SET site=?, category=?, name=?, host=?, ports=?, scheme=?,"
-                    " web_port=?, path=?, username=?, password_enc=?, note=? WHERE id=?",
+                    " web_port=?, path=?, username=?, password_enc=?, note=?, open_url=?,"
+                    " stream_name=?, use_site_creds=? WHERE id=?",
                     values + (device.id,),
                 )
             self._db.commit()

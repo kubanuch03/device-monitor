@@ -151,6 +151,12 @@ class Handler(BaseHTTPRequestHandler):
                        {"auth_required": config.AUTH_ENABLED, "authenticated": self._authed()})
         elif path.startswith("/static/"):
             self._static(path[len("/static/"):])
+        elif path == "/api/health":
+            # Намеренно ДО проверки входа: это liveness-проба для HEALTHCHECK в
+            # Dockerfile, которая ходит без cookie. За авторизацией она отдавала
+            # бы 401, и контейнер с включённым DM_PASSWORD становился unhealthy.
+            # Секретов в ответе нет - только «процесс жив» и время.
+            self._json(HTTPStatus.OK, {"ok": True, "time": api.now_iso()})
         elif not self._authed():
             self._error(HTTPStatus.UNAUTHORIZED, "Нужен вход")
         elif path == "/api/state":
@@ -159,8 +165,6 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(api.device_history(self.app, path[len("/api/devices/"):-len("/history")]))
         elif path.startswith("/api/devices/") and path.endswith("/secret"):
             self._reply(api.device_secret(self.app, path[len("/api/devices/"):-len("/secret")]))
-        elif path == "/api/health":
-            self._json(HTTPStatus.OK, {"ok": True, "time": api.now_iso()})
         else:
             self._error(HTTPStatus.NOT_FOUND, "Не найдено")
 

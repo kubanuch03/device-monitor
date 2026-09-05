@@ -14,9 +14,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from device_monitor.config import HISTORY_DAYS, INSPECT_TTL, MAX_WORKERS, POLL_INTERVAL
+from device_monitor.domain.credentials import effective
 from device_monitor.domain.models import Device
 from device_monitor.probing.socks import ProxyError
 from device_monitor.probing.tcp import probe
+from device_monitor.probing.webauth import probe_web_auth
 from device_monitor.security import deobfuscate
 from device_monitor.vendors import identify
 
@@ -156,29 +158,48 @@ class Monitor:
             self._forced.clear()
             stale = [
                 d for d in devices
-                if d.site not in proxied
-                and (d.id in forced or now - self._facts.get(d.id, {}).get("_at", 0) > INSPECT_TTL)
+                if d.id in forced or now - self._facts.get(d.id, {}).get("_at", 0) > INSPECT_TTL
             ]
-        if not stale:
+        # Вендорный опрос идёт по настоящему адресу устройства через urllib, а
+        # он SOCKS не умеет - для точек за туннелем его по-прежнему пропускаем.
+        # А вот схему авторизации спрашивать можно и там, где есть проброшенный
+        # порт: он локальный, и именно он откроется кнопкой.
+        # Учётку разрешаем здесь, а не в _inspect: правило «своя или точки»
+        # должно быть одно на весь сервис, и живёт оно в domain/credentials.py.
+        sites = {s.name: s for s in self.storage.sites()}
+        jobs = [(d, d.site not in proxied, *effective(d, sites.get(d.site)))
+                for d in stale if d.site not in proxied or d.open_url]
+        if not jobs:
             return
 
-        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(stale))) as pool:
-            for device_id, facts in pool.map(self._inspect, stale):
+        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(jobs))) as pool:
+            for device_id, facts in pool.map(self._inspect, jobs):
                 with self._lock:
                     self._facts[device_id] = facts
 
     @staticmethod
-    def _inspect(device: Device) -> tuple[str, dict]:
+    def _inspect(job: tuple[Device, bool, str, str]) -> tuple[str, dict]:
+        device, vendor_allowed, username, password_enc = job
         facts: dict = {"checked_at": now_iso(), "_at": time.time()}
         try:
+            # Спрашиваем это до вендорного опроса и независимо от учётки:
+            # ответ нужен даже для устройств, пароль от которых не заведён —
+            # именно по нему видно, чем кнопка «Открыть» сможет помочь.
+            facts.update(probe_web_auth(device))
+            if not vendor_allowed:
+                return device.id, {k: v for k, v in facts.items() if v}
             driver, detected = identify(device)
             facts.update(detected)
             if driver is None:
                 facts["detail"] = "производитель не определён"
-            elif not device.username or not device.password_enc:
+            elif not username or not password_enc:
                 facts["detail"] = "нет учётных данных"
             else:
-                facts.update(driver.collect(device, deobfuscate(device.password_enc)))
+                # Драйвер берёт логин из самого устройства, поэтому при
+                # наследовании подменяем его на учётку точки - иначе пошли бы
+                # с чужим логином и своим паролем, то есть ни с чем.
+                facts.update(driver.collect(device.with_fields(username=username),
+                                            deobfuscate(password_enc)))
         except Exception as exc:
             facts["detail"] = f"не удалось опросить: {exc}"
         return device.id, {k: v for k, v in facts.items() if v}

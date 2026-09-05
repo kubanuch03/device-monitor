@@ -10,8 +10,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from http import HTTPStatus
 
-from device_monitor.config import HISTORY_DAYS, POLL_INTERVAL
+from device_monitor.config import AUTH_ENABLED, HISTORY_DAYS, POLL_INTERVAL
 from device_monitor.domain.errors import ValidationError
+from device_monitor.domain.credentials import effective
 from device_monitor.domain.validation import clean_category, clean_device, clean_site
 from device_monitor.security import deobfuscate
 
@@ -25,12 +26,21 @@ def state(app) -> tuple[int, dict]:
     facts = app.monitor.facts()
     tunnels = app.monitor.tunnels()
 
+    known_sites = {s.name: s for s in app.storage.sites()}
+
     devices = []
     for device in app.storage.devices():
         entry = device.public()
         current = live.get(device.id, {})
+        # Логин и признак пароля показываем ЭФФЕКТИВНЫЕ - те, под которыми
+        # реально пойдём на устройство. Иначе карточка камеры, наследующей
+        # учётку точки, выглядела бы как «пароля нет», и кнопка «Открыть» не
+        # стала бы его подставлять, хотя пароль есть.
+        username, password_enc = effective(device, known_sites.get(device.site))
         entry.update(
             {
+                "username": username,
+                "has_password": bool(password_enc),
                 "status": current.get("status", "unknown"),
                 "ports_state": current.get("ports", {}),
                 "latency_ms": current.get("latency_ms"),
@@ -52,9 +62,7 @@ def state(app) -> tuple[int, dict]:
     sites = []
     for s in app.storage.sites():
         row = {
-            "name": s.name,
-            "note": s.note,
-            "proxy": s.proxy,
+            **s.public(),
             **summary([d for d in devices if d["site"] == s.name]),
         }
         if s.proxy:
@@ -101,13 +109,24 @@ def device_secret(app, device_id: str) -> tuple[int, dict]:
     должен доставаться только по явному запросу залогиненного пользователя.
     Доступ уже отфильтрован авторизацией на уровне транспорта.
     """
+    # Хранить учётки без пароля на панель запрещает clean_device(), но этого
+    # мало: пароль можно завести с включённым входом, а потом перезапустить
+    # сервис без DM_PASSWORD - и тогда _authed() пропускает всех, а секреты
+    # остаются в базе. Значит проверять надо не «как сохранили», а «как отдаём
+    # сейчас»: без входа секреты не выдаём никому.
+    if not AUTH_ENABLED:
+        return HTTPStatus.FORBIDDEN, {
+            "detail": "Панель работает без входа — учётные данные устройств не выдаются. "
+                      "Задайте DM_PASSWORD и перезапустите сервис."
+        }
     device = app.storage.device(device_id)
     if device is None:
         return HTTPStatus.NOT_FOUND, {"detail": "Устройство не найдено"}
+    username, password_enc = effective(device, app.storage.site(device.site))
     return HTTPStatus.OK, {
-        "username": device.username,
-        "password": deobfuscate(device.password_enc) if device.password_enc else "",
-        "has_password": device.has_password,
+        "username": username,
+        "password": deobfuscate(password_enc) if password_enc else "",
+        "has_password": bool(password_enc),
     }
 
 
@@ -135,13 +154,18 @@ def delete_device(app, device_id: str) -> tuple[int, dict]:
 
 
 def create_site(app, body: dict) -> tuple[int, dict]:
-    name, note, proxy = clean_site(body)
-    return HTTPStatus.CREATED, {"site": app.storage.add_site(name, note, proxy).__dict__}
+    return HTTPStatus.CREATED, {"site": app.storage.add_site(clean_site(body)).public()}
 
 
 def update_site(app, old: str, body: dict) -> tuple[int, dict]:
-    name, note, proxy = clean_site(body)
-    return HTTPStatus.OK, {"site": app.storage.update_site(old, name, note, proxy).__dict__}
+    # existing нужен, чтобы пустое поле пароля означало «оставить как было»:
+    # наружу пароль не отдаётся, и форма его не знает.
+    site = clean_site(body, existing=app.storage.site(old))
+    updated = app.storage.update_site(old, site)
+    # Учётка точки могла смениться - устройства, которые её наследуют, надо
+    # опросить заново, иначе сведения останутся собранными под старым паролем.
+    app.monitor.request_run()
+    return HTTPStatus.OK, {"site": updated.public()}
 
 
 def delete_site(app, name: str) -> tuple[int, dict]:

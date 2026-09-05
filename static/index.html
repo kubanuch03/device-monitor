@@ -17,6 +17,10 @@
     <div class="summary" id="summary"></div>
     <div class="topbar-actions">
       <span class="updated" id="updated"></span>
+      <div class="view-toggle" id="view-toggle" role="group" aria-label="Вид главного экрана">
+        <button type="button" data-view="topology">Топология</button>
+        <button type="button" data-view="list">Список</button>
+      </div>
       <button type="button" id="recheck">Проверить сейчас</button>
       <button type="button" class="primary" id="add">Добавить устройство</button>
     </div>
@@ -97,7 +101,15 @@
       <p class="hint">Куда открывать на устройстве. По умолчанию корень — <code>/</code>.</p>
     </div>
 
-    <div class="row">
+    <div class="field check">
+      <label class="check-line">
+        <input type="checkbox" id="f-use-site-creds" name="use_site_creds">
+        <span>Брать учётку точки</span>
+      </label>
+      <p class="hint" id="f-inherit-hint">У камер объекта пароль обычно общий — заведите его один раз в настройках точки.</p>
+    </div>
+
+    <div class="row" id="f-creds-row">
       <div class="field">
         <label for="f-username">Логин устройства</label>
         <input id="f-username" name="username" placeholder="admin" autocomplete="off" spellcheck="false">
@@ -110,6 +122,20 @@
         </div>
         <p class="hint" id="f-password-hint">Нужен для сбора сведений с устройства (модель, серийник, прошивка).</p>
       </div>
+    </div>
+
+    <div class="field">
+      <label for="f-open-url">Адрес для открытия</label>
+      <input id="f-open-url" name="open_url" placeholder="http://127.0.0.1:8124/" autocomplete="off" spellcheck="false">
+      <p class="hint">Нужен, когда до устройства браузер сам не дойдёт — например,
+         оно за туннелем и проброшено на локальный порт. Пусто — открывается обычный адрес.</p>
+    </div>
+
+    <div class="field">
+      <label for="f-stream-name">Имя потока в go2rtc</label>
+      <input id="f-stream-name" name="stream_name" placeholder="camera_entrance" autocomplete="off" spellcheck="false">
+      <p class="hint">Как источник называется в go2rtc объекта. Заполняется только у камер —
+         тогда у устройства появляется кнопка «Смотреть». Адрес самого go2rtc задаётся у точки.</p>
     </div>
 
     <div class="field">
@@ -144,6 +170,28 @@
       <label for="g-proxy">SOCKS-прокси точки</label>
       <input id="g-proxy" name="proxy" placeholder="socks5://127.0.0.1:1080" autocomplete="off" spellcheck="false">
       <p class="hint">Для объектов без прямого маршрута — через SSH-туннель <code>ssh -D</code>. Пусто = прямой доступ.</p>
+    </div>
+
+    <div class="field" id="g-stream-field" hidden>
+      <label for="g-stream">Видео (go2rtc)</label>
+      <input id="g-stream" name="stream_base" placeholder="http://10.20.4.2:1983" autocomplete="off" spellcheck="false">
+      <p class="hint">Адрес go2rtc на сервере объекта. Браузер не умеет RTSP сам — поток
+         переупаковывает go2rtc, а дашборд только показывает его плееры. Пусто = видео у точки нет.</p>
+    </div>
+
+    <div class="row" id="g-creds-field" hidden>
+      <div class="field">
+        <label for="g-username">Логин по умолчанию</label>
+        <input id="g-username" name="username" placeholder="admin" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="g-password">Пароль по умолчанию</label>
+        <div class="pw-wrap">
+          <input id="g-password" name="password" type="password" placeholder="" autocomplete="new-password">
+          <button type="button" id="g-password-eye" class="pw-eye" aria-label="Показать пароль" title="Показать пароль"></button>
+        </div>
+        <p class="hint" id="g-password-hint">Общая учётка объекта. Устройства берут её, только если у них это включено явно.</p>
+      </div>
     </div>
 
     <p class="form-error" id="group-form-error" hidden></p>

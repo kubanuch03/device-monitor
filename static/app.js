@@ -16,6 +16,11 @@ const els = {
 let state = { devices: [], sites: [], categories: [], updated_at: null, poll_interval: 20 };
 let editingId = null;
 let timer = null;
+// Вид главного экрана. По умолчанию топология; явный выбор пользователя
+// сохраняется и переживает перезагрузку. Значение "list" осмысленное, а не
+// «не задано», поэтому проверяем именно его, а не truthy.
+const VIEW_KEY = "dm_view_mode";
+let topologyView = localStorage.getItem(VIEW_KEY) !== "list";
 
 // Экран описывается адресом страницы, а не переменной: перезагрузка и ссылка
 // в новой вкладке возвращают ровно туда, где был. Три уровня:
@@ -66,6 +71,77 @@ function plural(n, one, few, many) {
 
 const UNCATEGORIZED = "Без категории";
 const STATE_LABEL = { up: "на связи", down: "не отвечает", unknown: "не проверено" };
+
+// Схемы авторизации, которые браузер отрабатывает сам по адресу с учёткой.
+// Заполняется на сервере пробником probing/webauth.py: он спрашивает ровно тот
+// адрес, который откроется кнопкой, и смотрит WWW-Authenticate в ответе 401.
+const AUTOLOGIN_SCHEMES = ["basic", "digest"];
+
+function webAuthOf(device) {
+  return ((device.facts || {}).web_auth || "").toLowerCase();
+}
+
+/** Адрес с учёткой внутри: http://логин:пароль@хост/путь */
+function withCredentials(rawUrl, username, password) {
+  const url = new URL(rawUrl, window.location.href);
+  // Строку собираем сами, а не через сеттеры url.username/url.password:
+  // они кодируют значение по своим правилам, и пароль, в котором уже есть
+  // процент или двоеточие, приехал бы на устройство другим паролем.
+  const creds = `${encodeURIComponent(username)}:${encodeURIComponent(password)}`;
+  return `${url.protocol}//${creds}@${url.host}${url.pathname}${url.search}${url.hash}`;
+}
+
+/**
+ * Открыть веб-интерфейс устройства, подставив учётку, если это возможно.
+ *
+ * Вкладка открывается СРАЗУ, до запроса секрета, и только потом получает
+ * адрес. Наоборот нельзя: после await браузер уже не считает открытие
+ * следствием клика и глушит вкладку как всплывающее окно.
+ */
+async function openDevice(device, target, autoLogin, button) {
+  if (!device.has_password) {
+    window.open(target, "_blank", "noopener");
+    return;
+  }
+  if (!autoLogin) {
+    // Пароль формой — открываем как обычно и кладём пароль в буфер.
+    window.open(target, "_blank", "noopener");
+    await copyDevicePassword(device, button);
+    return;
+  }
+  // noopener здесь не поставить: с ним window.open возвращает null и адрес
+  // вкладке уже не задать. Вместо флага рвём связь вручную, пока вкладка ещё
+  // пустая и своя, — иначе морда устройства смогла бы увести панель на себя.
+  const tab = window.open("", "_blank");
+  if (!tab) {
+    // Вкладку зарезал блокировщик всплывающих окон. Молча открыть без учётки
+    // нельзя - человек решит, что автоподстановка сломалась, и пойдёт искать
+    // причину в устройстве.
+    showAlert("Браузер заблокировал новую вкладку. Разрешите всплывающие окна "
+              + "для этой страницы — без вкладки подставить учётку некуда.");
+    return;
+  }
+  try { tab.opener = null; } catch (e) { /* уже отвязана */ }
+  let secret;
+  try {
+    secret = await api(`/api/devices/${device.id}/secret`);
+  } catch (error) {
+    showAlert(error.message);
+    tab.location = target;   // без учётки, но открыть всё равно надо
+    return;
+  }
+  tab.location = withCredentials(target, secret.username, secret.password);
+}
+
+async function copyDevicePassword(device, button) {
+  try {
+    const secret = await api(`/api/devices/${device.id}/secret`);
+    if (!secret.password) return;
+    await copyText(secret.password, button);
+  } catch (error) {
+    showAlert(error.message);
+  }
+}
 
 function devicesOf(site, category) {
   return state.devices.filter(
@@ -273,20 +349,58 @@ function deviceCard(device) {
   open.className = "primary";
   open.type = "button";
   open.textContent = "Открыть";
-  // Прямая точка — обычная вкладка (браузер дойдёт сам). Точка за прокси —
-  // через devmon://, чтобы локальный лаунчер поднял профиль этой точки с её
-  // SOCKS: иначе обычная вкладка до устройства за туннелем не достучится.
+  // Порядок важен. Если у устройства задан отдельный «адрес для открытия»
+  // (обычно локальный порт, проброшенный туннелем), он выигрывает у всего
+  // остального: это обычная вкладка, работает в любом браузере и не зависит
+  // ни от установленного лаунчера, ни от схемы devmon://, ни от песочницы
+  // snap, которая не пускает браузер к обработчикам хоста.
   const siteProxy = (siteInfo(device.site) || {}).proxy;
-  if (siteProxy) {
+  // Браузер умеет войти за нас сам, но только пока устройство спрашивает
+  // пароль по HTTP - ответом 401 с заголовком WWW-Authenticate. Проверено на
+  // Chrome 152: адрес вида http://логин:пароль@хост/ проходит и с Basic, и с
+  // Digest при переходе верхнего уровня. Если же вход нарисован формой внутри
+  // страницы (так делает веб-морда Dahua), подставить учётку снаружи нельзя
+  // ничем: страница живёт в чужом origin, и лезть в её поля браузер не даст
+  // никому. Там остаётся буфер обмена - одна вставка вместо набора пароля.
+  const autoLogin = device.has_password && AUTOLOGIN_SCHEMES.includes(webAuthOf(device));
+
+  if (device.open_url) {
+    open.onclick = () => openDevice(device, device.open_url, autoLogin, open);
+    open.title = `Откроется через проброшенный порт: ${device.open_url}`;
+  } else if (siteProxy) {
+    // Учётку через лаунчер не передаём намеренно: она ушла бы в аргументы
+    // процесса и стала бы видна в `ps` любому пользователю машины. Здесь
+    // работает только буфер обмена.
     open.onclick = () => {
       const link = "devmon://open?site=" + encodeURIComponent(device.site)
         + "&proxy=" + encodeURIComponent(siteProxy)
         + "&url=" + encodeURIComponent(device.url);
       window.location.href = link;
+      if (device.has_password) copyDevicePassword(device, open);
     };
     open.title = "Откроется в профиле точки через её туннель (нужен установленный обработчик)";
   } else {
-    open.onclick = () => window.open(device.url, "_blank", "noopener");
+    open.onclick = () => openDevice(device, device.url, autoLogin, open);
+  }
+  if (device.has_password) {
+    open.title = autoLogin
+      ? `Вход подставится сам (${webAuthOf(device)}, логин ${device.username || "не задан"})`
+      : (open.title ? open.title + ". " : "") + "Пароль ляжет в буфер — вставьте в форму входа";
+  }
+
+  // Видео показываем только когда есть обе половины адреса: где стоит
+  // go2rtc (у точки) и как называется источник (у устройства). Одной из них
+  // мало — кнопка вела бы в пустоту.
+  const streamBase = (siteInfo(device.site) || {}).stream_base;
+  if (streamBase && device.stream_name) {
+    const watch = document.createElement("button");
+    watch.type = "button";
+    watch.textContent = "Смотреть";
+    watch.title = "Открыть поток в новой вкладке";
+    watch.onclick = () => window.open(
+      `/static/streams.html?site=${encodeURIComponent(device.site)}&device=${encodeURIComponent(device.id)}`,
+      "_blank", "noopener");
+    actions.append(watch);
   }
 
   const info = document.createElement("button");
@@ -342,7 +456,7 @@ function deviceCard(device) {
       const dt = document.createElement("dt");
       dt.textContent = FACT_LABELS[k];
       const dd = document.createElement("dd");
-      dd.textContent = facts[k];
+      dd.textContent = factText(k, facts[k]);
       dl.append(dt, dd);
     });
     extra.append(dl);
@@ -375,6 +489,11 @@ function deviceCard(device) {
 function renderSitesScreen() {
   els.view.append(screenHead("Точки", "Выберите точку, чтобы увидеть её оборудование."));
 
+  if (topologyView) {
+    els.view.append(renderTopology());
+    return;
+  }
+
   const grid = document.createElement("div");
   grid.className = "site-grid";
   siteNames().forEach((site) => {
@@ -395,6 +514,171 @@ function renderSitesScreen() {
 }
 
 // ---------------------------------------------------------------------------
+// вид «Топология»: те же данные, что список точек, графом хаб-спицы вместо
+// карточек. Переключатель хранится в localStorage — выбор на этой машине,
+// не настройка сервиса.
+// ---------------------------------------------------------------------------
+
+// Переключатель живёт в верхней панели, а не на экране «Точки»: адрес
+// страницы помнит последнюю открытую точку, и на экране объекта кнопка
+// с экрана списка была бы просто не видна.
+function setupViewToggle() {
+  const box = document.getElementById("view-toggle");
+  if (!box) return;
+  box.querySelectorAll("button").forEach((button) => {
+    button.onclick = () => setTopologyView(button.dataset.view === "topology");
+  });
+}
+
+function syncViewToggle() {
+  const box = document.getElementById("view-toggle");
+  if (!box) return;
+  box.querySelectorAll("button").forEach((button) => {
+    button.classList.toggle("active", (button.dataset.view === "topology") === topologyView);
+  });
+}
+
+function setTopologyView(value) {
+  topologyView = value;
+  try { localStorage.setItem(VIEW_KEY, value ? "topology" : "list"); } catch (e) { /* приватный режим */ }
+  // Оба вида — про верхний уровень. Если сейчас открыта точка, переключение
+  // вида без возврата наверх выглядело бы как «кнопка ничего не делает».
+  if (route().site) goTo(null);
+  else render();
+}
+
+function renderTopology() {
+  const wrap = document.createElement("div");
+  wrap.className = "topo-grid";
+  const names = siteNames();
+  if (!names.length) {
+    const empty = document.createElement("p");
+    empty.className = "site-note";
+    empty.textContent = "Пока нет точек.";
+    wrap.append(empty);
+    return wrap;
+  }
+  names.forEach((site) => {
+    const meta = siteInfo(site);
+    const items = devicesOf(site, null);
+    const tunnelDown = meta.proxy ? meta.tunnel === "down" : false;
+    // Хаб красит siteOffline, а не только состояние туннеля: у точки без
+    // прокси туннеля нет вовсе, но если не отвечает ни одно устройство —
+    // связи с объектом нет, и хаб не должен выглядеть живым. Та же функция
+    // решает, показывать ли баннер сверху, — один смысл, одна логика.
+    wrap.append(topoCard(site, meta, items, tunnelDown, siteOffline(site)));
+  });
+  return wrap;
+}
+
+function topoCard(site, meta, items, tunnelDown, offline) {
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "topo-card";
+  card.title = `Открыть точку «${site}»`;
+  card.onclick = () => goTo(site, null);
+
+  const head = document.createElement("div");
+  head.className = "topo-card-head";
+  const name = document.createElement("span");
+  name.className = "topo-card-name";
+  name.textContent = site;
+  head.append(name);
+  if (meta.proxy) {
+    const chip = document.createElement("span");
+    chip.className = `topo-chip ${tunnelDown ? "down" : "up"}`;
+    chip.textContent = tunnelDown ? "туннель: down" : "туннель: up";
+    head.append(chip);
+  }
+  card.append(head);
+  card.append(topoDiagram(items, tunnelDown, offline));
+
+  const down = items.filter((d) => d.status === "down").length;
+  const count = document.createElement("div");
+  count.className = "topo-card-count" + (offline ? " offline" : "");
+  if (tunnelDown) count.textContent = "нет связи с туннелем";
+  else if (offline) count.textContent = `нет связи с объектом · ${countLabel(items)}`;
+  else if (down) count.textContent = `${countLabel(items)} · не отвечают ${down}`;
+  else count.textContent = countLabel(items);
+  card.append(count);
+
+  return card;
+}
+
+function shortLabel(name) {
+  const parts = name.split(",");
+  const label = parts.length > 1 ? parts[parts.length - 1].trim() : name.split(" ")[0];
+  return label.length > 11 ? label.slice(0, 10) + "…" : label;
+}
+
+function topoDiagram(items, tunnelDown, offline) {
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 280, hubX = W / 2, hubY = 38, rowY = 126;
+  const n = items.length;
+  const marginX = 26;
+  const step = n > 1 ? (W - marginX * 2) / (n - 1) : 0;
+
+  // Подписи влезают только пока узлов мало. На 14 устройствах они налезают
+  // друг на друга и превращаются в кашу, поэтому дальше остаются одни точки,
+  // а имя и статус читаются наведением.
+  const slot = n > 1 ? step : W;
+  const withLabels = slot >= 40;
+  const radius = slot >= 26 ? 8 : 5;
+  const H = withLabels ? 168 : 148;
+
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "topo-diagram", role: "img" });
+  const hubState = offline ? "down" : "up";
+
+  svg.append(el("line", {
+    x1: hubX, y1: 2, x2: hubX, y2: hubY - 11,
+    class: `topo-trunk ${hubState}`,
+  }));
+
+  if (!offline) svg.append(el("circle", { cx: hubX, cy: hubY, r: 12, class: "topo-hub-ring" }));
+  svg.append(el("circle", { cx: hubX, cy: hubY, r: 9, class: `topo-hub ${hubState}` }));
+
+  if (!items.length) {
+    const t = el("text", { x: hubX, y: rowY, class: "topo-empty", "text-anchor": "middle" });
+    t.textContent = "нет устройств";
+    svg.append(t);
+    return svg;
+  }
+
+  items.forEach((device, i) => {
+    const x = n > 1 ? marginX + step * i : hubX;
+    const status = tunnelDown ? "down" : device.status;
+    svg.append(el("line", { x1: hubX, y1: hubY + 7, x2: x, y2: rowY - radius, class: "topo-spoke" }));
+
+    const node = el("circle", { cx: x, cy: rowY, r: radius, class: `topo-node ${status}` });
+    const title = el("title", {});
+    const latency = status === "up" && device.latency_ms != null ? `, ${device.latency_ms} мс` : "";
+    title.textContent = `${device.name} — ${STATE_LABEL[status] || STATE_LABEL.unknown}${latency}`;
+    node.append(title);
+    svg.append(node);
+
+    if (!withLabels) return;
+
+    const label = el("text", { x, y: rowY + 16, class: "topo-node-label", "text-anchor": "middle" });
+    label.textContent = shortLabel(device.name);
+    svg.append(label);
+
+    if (status === "up" && device.latency_ms != null) {
+      const sub = el("text", { x, y: rowY + 25, class: "topo-node-sub", "text-anchor": "middle" });
+      sub.textContent = `${device.latency_ms}мс`;
+      svg.append(sub);
+    }
+  });
+
+  return svg;
+}
+
+// ---------------------------------------------------------------------------
 // экран 2: категории точки
 // ---------------------------------------------------------------------------
 
@@ -406,9 +690,26 @@ function renderCategoriesScreen(site) {
   settings.onclick = () => openGroupEditor("site", site);
 
   const meta = siteInfo(site);
+  // Мозаика всех камер точки — отдельной вкладкой. Показываем кнопку только
+  // если у точки задан go2rtc и есть хоть одна камера с именем потока.
+  const withStream = all.filter((d) => d.stream_name).length;
+  let actions = settings;
+  if (meta.stream_base && withStream) {
+    const watchAll = document.createElement("button");
+    watchAll.type = "button";
+    watchAll.className = "primary";
+    watchAll.textContent = `Смотреть камеры (${withStream})`;
+    watchAll.onclick = () => window.open(
+      `/static/streams.html?site=${encodeURIComponent(site)}`, "_blank", "noopener");
+    // Обе кнопки одним узлом: screenHead принимает ровно один элемент-действие,
+    // а вставить рядом нельзя — он ещё не в документе.
+    actions = document.createElement("div");
+    actions.className = "head-actions";
+    actions.append(watchAll, settings);
+  }
   els.view.append(
     crumb("← Все точки", () => goTo(null)),
-    screenHead(site, `${countLabel(all)} · ${badgeLabel(all)}`, meta.note, settings)
+    screenHead(site, `${countLabel(all)} · ${badgeLabel(all)}`, meta.note, actions)
   );
   if (meta.proxy && meta.tunnel === "down") {
     const warn = document.createElement("div");
@@ -503,6 +804,37 @@ function renderDevicesScreen(site, category) {
 // render
 // ---------------------------------------------------------------------------
 
+// Точка считается «без связи», когда у неё есть устройства и НИ ОДНО не на
+// связи (или лёг её туннель). Это характерный признак обрыва VPN/туннеля до
+// объекта, а не поломки одного устройства — и повод показать подсказку.
+function siteOffline(name) {
+  const items = devicesOf(name, null);
+  if (!items.length) return false;
+  const info = siteInfo(name);
+  if (info.proxy && info.tunnel === "down") return true;
+  return items.every((d) => d.status === "down");
+}
+
+function offlineBanner() {
+  const { site } = route();
+  const dead = site
+    ? (siteOffline(site) ? [site] : [])
+    : siteNames().filter(siteOffline);
+  if (!dead.length) return;
+  const many = dead.length > 1;
+  // Имя точки вводит пользователь, то есть это чужой текст. Через innerHTML
+  // точка с именем вида <img src=x onerror=…> исполняла бы свой код в origin
+  // панели — а панель умеет отдавать /secret с паролями от железа. Поэтому
+  // здесь собираются узлы, а не строка разметки.
+  els.alert.textContent = "";
+  const strong = document.createElement("b");
+  strong.textContent = `Нет связи ${many ? "с объектами" : "с объектом"}: ${dead.join(", ")}.`;
+  els.alert.append(strong, document.createTextNode(
+    " Проверьте, включён ли VPN до объекта (или поднят ли SSH-туннель). "
+    + "Пока связи нет, устройства показываются недоступными, даже если они работают."));
+  els.alert.hidden = false;
+}
+
 function render() {
   els.view.textContent = "";
   const devices = state.devices || [];
@@ -510,6 +842,7 @@ function render() {
   els.empty.hidden = hasAnything;
 
   const { site, category } = route();
+  syncViewToggle();
 
   // Точка или категория могли исчезнуть, пока экран был открыт. Молча
   // поднимаемся на уровень выше вместо экрана несуществующего раздела.
@@ -541,6 +874,11 @@ function render() {
     else if (site) renderCategoriesScreen(site);
     else renderSitesScreen();
   }
+
+  // Баннер про VPN — после отрисовки, поверх пустого alert. Если сервис
+  // отвечает, но объект недоступен, обычную ошибку это не затирает: она
+  // выставляется только в catch refresh().
+  offlineBanner();
 
   els.siteOptions.textContent = "";
   knownSites.forEach((name) => {
@@ -621,6 +959,16 @@ function openGroupEditor(kind, name, site) {
   // Прокси — только у точки; для категории поле прячем.
   document.getElementById("g-proxy-field").hidden = !isSite;
   groupForm.proxy.value = isSite ? (info.proxy || "") : "";
+  document.getElementById("g-stream-field").hidden = !isSite;
+  groupForm.stream_base.value = isSite ? (info.stream_base || "") : "";
+  // Учётка - тоже только у точки. Пароль write-only, ровно как у устройства:
+  // в форме всегда пусто, а плейсхолдер говорит, задан ли он.
+  document.getElementById("g-creds-field").hidden = !isSite;
+  groupForm.username.value = isSite ? (info.username || "") : "";
+  groupForm.password.value = "";
+  groupForm.password.type = "password";
+  if (groupEye) groupEye.innerHTML = EYE;
+  groupForm.password.placeholder = isSite && info.has_password ? "сохранён — пусто = не менять" : "";
   groupDelete.hidden = !name;
   groupDelete.textContent = isSite ? "Удалить точку" : "Удалить категорию";
   groupError.hidden = true;
@@ -632,7 +980,13 @@ groupForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const isSite = groupKind === "site";
   const payload = { name: groupForm.name.value, note: groupForm.note.value };
-  if (isSite) payload.proxy = groupForm.proxy.value;
+  if (isSite) {
+    payload.proxy = groupForm.proxy.value;
+    payload.stream_base = groupForm.stream_base.value;
+    payload.username = groupForm.username.value;
+    // Пустое поле = «не менять», см. clean_password() на бэкенде.
+    if (groupForm.password.value) payload.password = groupForm.password.value;
+  }
   try {
     let result;
     if (isSite) {
@@ -720,6 +1074,10 @@ function openEditor(device, preset, asCopy) {
   document.getElementById("f-password-hint").textContent = hasPass
     ? "Оставьте пустым, чтобы не менять. Введите новый — чтобы заменить."
     : "Нужен для сбора сведений с устройства (модель, серийник, прошивку).";
+  inheritBox.checked = !!(device && device.use_site_creds);
+  syncInherit();
+  els.form.open_url.value = device ? device.open_url || "" : "";
+  els.form.stream_name.value = device ? device.stream_name || "" : "";
   els.form.note.value = device ? device.note || "" : "";
   els.formError.hidden = true;
   els.editor.showModal();
@@ -739,7 +1097,10 @@ els.form.addEventListener("submit", async (event) => {
     ports: els.form.ports.value,
     web_port: els.form.web_port.value,
     path: els.form.path.value,
+    open_url: els.form.open_url.value,
+    stream_name: els.form.stream_name.value,
     username: els.form.username.value,
+    use_site_creds: inheritBox.checked,
     note: els.form.note.value,
   };
   // Пароль шлём только если поле заполнено: пустое = «не менять» (см. бэкенд).
@@ -769,6 +1130,35 @@ document.getElementById("editor-cancel").onclick = () => els.editor.close();
 const EYE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.9 4.2A11 11 0 0 1 12 4c7 0 11 7 11 7a18 18 0 0 1-3 3.5M6.6 6.6A18 18 0 0 0 1 12s4 7 11 7a11 11 0 0 0 4-.7"/><path d="m3 3 18 18"/></svg>';
 const pwEye = document.getElementById("f-password-eye");
+const groupEye = document.getElementById("g-password-eye");
+const inheritBox = document.getElementById("f-use-site-creds");
+
+/** Когда устройство берёт учётку точки, свои поля логина и пароля не нужны. */
+function syncInherit() {
+  const on = inheritBox.checked;
+  document.getElementById("f-creds-row").hidden = on;
+  document.getElementById("f-inherit-hint").textContent = on
+    ? "Логин и пароль берутся из настроек точки — парой, а не по отдельности."
+    : "У камер объекта пароль обычно общий — заведите его один раз в настройках точки.";
+}
+
+inheritBox.addEventListener("change", () => {
+  if (inheritBox.checked) {
+    // Свои поля очищаем сразу: иначе на устройстве остался бы храниться пароль,
+    // которым мы всё равно не пользуемся, - лишний секрет в базе без смысла.
+    els.form.username.value = "";
+    els.form.password.value = "";
+  }
+  syncInherit();
+});
+
+if (groupEye) {
+  groupEye.onclick = () => {
+    const shown = groupForm.password.type === "text";
+    groupForm.password.type = shown ? "password" : "text";
+    groupEye.innerHTML = shown ? EYE : EYE_OFF;
+  };
+}
 pwEye.innerHTML = EYE;
 pwEye.onclick = () => {
   const shown = els.form.password.type === "text";
@@ -796,10 +1186,25 @@ const FACT_LABELS = {
   mac: "MAC-адрес",
   device_name: "Имя в устройстве",
   fingerprint: "Отпечаток (не меняется при смене IP)",
+  web_auth: "Как спрашивает пароль",
   detail: "Примечание",
 };
+
+// Значения, которые в сыром виде ничего не говорят человеку. Показываем не
+// «basic», а что из этого следует для кнопки «Открыть».
+const FACT_VALUES = {
+  web_auth: {
+    basic: "HTTP Basic — вход подставится сам",
+    digest: "HTTP Digest — вход подставится сам",
+    form: "форма на странице — пароль ляжет в буфер",
+  },
+};
+
+function factText(key, value) {
+  return (FACT_VALUES[key] && FACT_VALUES[key][value]) || value;
+}
 const FACT_ORDER = ["vendor", "model", "serial", "firmware", "released", "hardware", "mac",
-                    "device_name", "fingerprint", "detail"];
+                    "device_name", "fingerprint", "web_auth", "detail"];
 
 function row(label, value) {
   const dt = document.createElement("dt");
@@ -832,8 +1237,12 @@ async function copyText(text, button) {
       ta.style.opacity = "0";
       document.body.append(ta);
       ta.select();
-      document.execCommand("copy");
+      // execCommand не бросает исключение, а возвращает false. Без этой
+      // проверки кнопка рапортовала «Скопировано» там, где буфер остался
+      // пустым, и человек вставлял в форму устройства прошлое содержимое.
+      const done = document.execCommand("copy");
       ta.remove();
+      if (!done) throw new Error("буфер обмена недоступен");
     }
     button.textContent = "Скопировано";
   } catch (e) {
@@ -866,7 +1275,7 @@ async function renderDetail() {
   const dl = document.createElement("dl");
   dl.className = "facts-list";
   FACT_ORDER.forEach((key) => {
-    if (facts[key]) dl.append(...row(FACT_LABELS[key], facts[key]));
+    if (facts[key]) dl.append(...row(FACT_LABELS[key], factText(key, facts[key])));
   });
   if (!dl.children.length) {
     const note = document.createElement("p");
@@ -959,4 +1368,5 @@ document.getElementById("recheck").onclick = async (event) => {
   }
 };
 
+setupViewToggle();
 refresh();
