@@ -98,7 +98,12 @@ class Monitor:
         results = []
         for device, result, proxy_error in probed:
             if proxy_error is not None:
-                tunnels.setdefault(device.site, {"status": "down", "detail": proxy_error})
+                # Отказ туннеля важнее любого удачного результата, поэтому пишем
+                # прямо, а не setdefault. С setdefault статус определяло ПЕРВОЕ
+                # устройство точки, а список приходит из SELECT без ORDER BY -
+                # и туннель показывался живым просто потому, что одна проверка
+                # успела отработать раньше, чем другая уткнулась в мёртвый прокси.
+                tunnels[device.site] = {"status": "down", "detail": proxy_error}
                 from device_monitor.domain.models import ProbeResult
                 result = ProbeResult(status="down", ports={p: False for p in device.ports})
             elif proxies.get(device.site):
