@@ -37,6 +37,9 @@ class SiteRow(Base):
     name: Mapped[str] = mapped_column(String(120), primary_key=True)
     note: Mapped[str] = mapped_column(Text, default="")
     proxy: Mapped[str] = mapped_column(String(200), default="")
+    stream_base: Mapped[str] = mapped_column(String(200), default="")
+    username: Mapped[str] = mapped_column(String(120), default="")
+    password_enc: Mapped[str] = mapped_column(Text, default="")
 
 
 class CategoryRow(Base):
@@ -60,6 +63,9 @@ class DeviceRow(Base):
     username: Mapped[str] = mapped_column(String(120), default="")
     password_enc: Mapped[str] = mapped_column(Text, default="")
     note: Mapped[str] = mapped_column(Text, default="")
+    open_url: Mapped[str] = mapped_column(String(300), default="")
+    stream_name: Mapped[str] = mapped_column(String(120), default="")
+    use_site_creds: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class StatusEventRow(Base):
@@ -95,12 +101,62 @@ class SqlAlchemyStorage:
         )
         self._lock = threading.RLock()
         Base.metadata.create_all(self._engine)
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass
+        self._migrate()
+        self._lock_down()
+
+    # create_all создаёт только отсутствующие таблицы, а уже существующим не
+    # добавляет колонки. Базы, созданные до появления этих полей, поэтому
+    # дополняем вручную. Умолчания совпадают с моделью: старые данные ведут
+    # себя так же, как раньше (учётки у точек нет, устройства её не наследуют).
+    _ADDED_COLUMNS = {
+        "sites": (
+            ("stream_base", "VARCHAR(200) NOT NULL DEFAULT ''"),
+            ("username", "VARCHAR(120) NOT NULL DEFAULT ''"),
+            ("password_enc", "TEXT NOT NULL DEFAULT ''"),
+        ),
+        "devices": (
+            ("open_url", "VARCHAR(300) NOT NULL DEFAULT ''"),
+            ("stream_name", "VARCHAR(120) NOT NULL DEFAULT ''"),
+            ("use_site_creds", "INTEGER NOT NULL DEFAULT 0"),
+        ),
+    }
+
+    def _migrate(self) -> None:
+        with self._engine.begin() as conn:
+            for table, columns in self._ADDED_COLUMNS.items():
+                present = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+                for name, ddl in columns:
+                    if name not in present:
+                        conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+    def _lock_down(self) -> None:
+        """Закрыть от посторонних базу и её спутники.
+
+        SQLite в режиме WAL держит monitor.db-wal и -shm и пересоздаёт их при
+        каждом открытии, создавая по umask. Свежезаписанный пароль устройства
+        какое-то время лежит именно в WAL, поэтому chmod одного файла - не
+        защита. Закрываем каталог: без права входа в него файлы недоступны,
+        как бы SQLite их ни создал.
+        """
+        for target, mode in (
+            (self.path.parent, 0o700),
+            (self.path, 0o600),
+            (self.path.with_name(self.path.name + "-wal"), 0o600),
+            (self.path.with_name(self.path.name + "-shm"), 0o600),
+        ):
+            try:
+                target.chmod(mode)
+            except OSError:
+                pass
 
     # -- конвертация -----------------------------------------------------------
+
+    @staticmethod
+    def _to_site(row: SiteRow) -> Site:
+        return Site(
+            name=row.name, note=row.note, proxy=row.proxy, stream_base=row.stream_base,
+            username=row.username, password_enc=row.password_enc,
+        )
 
     @staticmethod
     def _to_device(row: DeviceRow) -> Device:
@@ -109,7 +165,8 @@ class SqlAlchemyStorage:
             id=row.id, site=row.site, category=row.category, name=row.name,
             host=row.host, ports=tuple(json.loads(row.ports)), scheme=row.scheme,
             web_port=row.web_port, path=row.path, username=row.username,
-            password_enc=row.password_enc, note=row.note,
+            password_enc=row.password_enc, note=row.note, open_url=row.open_url,
+            stream_name=row.stream_name, use_site_creds=bool(row.use_site_creds),
         )
 
     # -- точки -----------------------------------------------------------------
@@ -118,41 +175,54 @@ class SqlAlchemyStorage:
         with self._lock, Session(self._engine) as s:
             rows = s.scalars(select(SiteRow)).all()
             return sorted(
-                (Site(r.name, r.note, r.proxy) for r in rows),
+                (self._to_site(r) for r in rows),
                 key=lambda x: x.name.casefold(),
             )
 
-    def add_site(self, name: str, note: str, proxy: str = "") -> Site:
+    def site(self, name: str) -> Site | None:
         with self._lock, Session(self._engine) as s:
-            if any(same_name(r.name, name) for r in s.scalars(select(SiteRow))):
-                raise ConflictError(f"Точка «{name}» уже есть")
-            s.add(SiteRow(name=name, note=note, proxy=proxy))
-            s.commit()
-        return Site(name, note, proxy)
+            row = s.get(SiteRow, name)
+            return self._to_site(row) if row else None
 
-    def update_site(self, old_name: str, name: str, note: str, proxy: str = "") -> Site:
+    @staticmethod
+    def _site_row(site: Site) -> SiteRow:
+        return SiteRow(
+            name=site.name, note=site.note, proxy=site.proxy, stream_base=site.stream_base,
+            username=site.username, password_enc=site.password_enc,
+        )
+
+    def add_site(self, site: Site) -> Site:
+        with self._lock, Session(self._engine) as s:
+            if any(same_name(r.name, site.name) for r in s.scalars(select(SiteRow))):
+                raise ConflictError(f"Точка «{site.name}» уже есть")
+            s.add(self._site_row(site))
+            s.commit()
+        return site
+
+    def update_site(self, old_name: str, site: Site) -> Site:
         with self._lock, Session(self._engine) as s:
             row = s.get(SiteRow, old_name)
             if row is None:
                 raise ValidationError("Точка не найдена")
-            if not same_name(name, old_name) and any(
-                same_name(r.name, name) for r in s.scalars(select(SiteRow))
+            if not same_name(site.name, old_name) and any(
+                same_name(r.name, site.name) for r in s.scalars(select(SiteRow))
             ):
-                raise ConflictError(f"Точка «{name}» уже есть")
+                raise ConflictError(f"Точка «{site.name}» уже есть")
             # Переименование каскадом в одной транзакции: устройства и категории
             # ссылаются на точку по имени.
-            if name != old_name:
+            if site.name != old_name:
                 for cat in s.scalars(select(CategoryRow).where(CategoryRow.site == old_name)):
-                    s.add(CategoryRow(site=name, name=cat.name, note=cat.note))
+                    s.add(CategoryRow(site=site.name, name=cat.name, note=cat.note))
                     s.delete(cat)
                 for dev in s.scalars(select(DeviceRow).where(DeviceRow.site == old_name)):
-                    dev.site = name
-                s.add(SiteRow(name=name, note=note, proxy=proxy))
+                    dev.site = site.name
+                s.add(self._site_row(site))
                 s.delete(row)
             else:
-                row.note, row.proxy = note, proxy
+                row.note, row.proxy, row.stream_base = site.note, site.proxy, site.stream_base
+                row.username, row.password_enc = site.username, site.password_enc
             s.commit()
-        return Site(name, note, proxy)
+        return site
 
     def delete_site(self, name: str) -> None:
         with self._lock, Session(self._engine) as s:
@@ -259,7 +329,8 @@ class SqlAlchemyStorage:
                 id=device.id, site=device.site, category=device.category, name=device.name,
                 host=device.host, ports=json.dumps(list(device.ports)), scheme=device.scheme,
                 web_port=device.web_port, path=device.path, username=device.username,
-                password_enc=device.password_enc, note=device.note,
+                password_enc=device.password_enc, note=device.note, open_url=device.open_url,
+                stream_name=device.stream_name, use_site_creds=int(device.use_site_creds),
             ))
             s.commit()
         return device
@@ -275,6 +346,8 @@ class SqlAlchemyStorage:
             row.host, row.ports = device.host, json.dumps(list(device.ports))
             row.scheme, row.web_port, row.path = device.scheme, device.web_port, device.path
             row.username, row.password_enc, row.note = device.username, device.password_enc, device.note
+            row.open_url, row.stream_name = device.open_url, device.stream_name
+            row.use_site_creds = int(device.use_site_creds)
             s.commit()
         return device
 

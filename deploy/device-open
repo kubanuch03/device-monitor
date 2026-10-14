@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Открывает веб-интерфейс устройства в отдельном профиле браузера, привязанном
-# к его точке, через прокси этой точки. Обобщение archa-browser на любую точку:
-# профиль и прокси берутся из данных, а не зашиты — новая точка работает сама.
+# к его точке, через прокси этой точки. Профиль и прокси берутся из данных, а
+# не зашиты — новая точка работает сама.
 #
 # Вызывается двумя способами:
 #   device-open 'devmon://open?site=<имя>&proxy=<socks>&url=<url>'   (из дашборда)
@@ -11,29 +11,44 @@
 # безопасности не запускает локальные процессы по клику. Дашборд отдаёт ссылку
 # devmon://, система зовёт этот скрипт — он и поднимает браузер.
 #
-# Почему профиль на точку: у каждого объекта свой --user-data-dir, чтобы куки и
-# сессии камер разных объектов не мешались, и чтобы весь трафик профиля шёл
-# через прокси именно этой точки (--proxy-server действует на процесс).
+# Почему профиль на точку: у каждого объекта свой профиль, чтобы куки и сессии
+# камер разных объектов не мешались, и чтобы весь трафик профиля шёл через
+# прокси именно этой точки.
+#
+# Поддерживаются Chrome/Chromium и Firefox. Chrome берёт прокси флагом
+# --proxy-server, Firefox флага не имеет — ему прокси прописывается в user.js
+# профиля, который перечитывается при каждом запуске.
 set -euo pipefail
 
-CHROME="${DEVICE_OPEN_BROWSER:-google-chrome}"
-PROFILE_ROOT="${DEVICE_OPEN_PROFILES:-$HOME/.config/device-monitor/profiles}"
+# --- где держать профили ----------------------------------------------------
+# Каталог НЕ скрытый намеренно. Firefox из snap не видит dot-каталоги в $HOME
+# (интерфейс home их не отдаёт), и профиль в ~/.config молча не открывался бы.
+PROFILE_ROOT="${DEVICE_OPEN_PROFILES:-$HOME/device-monitor-profiles}"
 
-urldecode() { printf '%b' "${1//%/\\x}"; }
+# --- выбор браузера ---------------------------------------------------------
+pick_browser() {
+    if [ -n "${DEVICE_OPEN_BROWSER:-}" ]; then echo "$DEVICE_OPEN_BROWSER"; return; fi
+    for b in google-chrome google-chrome-stable chromium chromium-browser brave-browser; do
+        command -v "$b" >/dev/null && { echo "$b"; return; }
+    done
+    command -v firefox >/dev/null && { echo firefox; return; }
+    echo ""
+}
+
+urldecode() { python3 -c 'import sys,urllib.parse;sys.stdout.write(urllib.parse.unquote(sys.argv[1]))' "$1"; }
 
 site=""; proxy=""; url=""
-
 arg="${1:-}"
 if [[ "$arg" == devmon://* ]]; then
-    # devmon://open?site=..&proxy=..&url=..
     query="${arg#devmon://open?}"
+    query="${query%%#*}"
     IFS='&' read -ra parts <<< "$query"
     for p in "${parts[@]}"; do
         key="${p%%=*}"; val="$(urldecode "${p#*=}")"
         case "$key" in
-            site) site="$val" ;;
+            site)  site="$val" ;;
             proxy) proxy="$val" ;;
-            url) url="$val" ;;
+            url)   url="$val" ;;
         esac
     done
 else
@@ -49,6 +64,16 @@ if [[ "$url" != http://* && "$url" != https://* ]]; then
     echo "Открывается только http/https, а не: $url" >&2
     exit 2
 fi
+# Прокси принимаем ТОЛЬКО локальный. Ссылку devmon:// может подсунуть любая
+# открытая в браузере страница, и без этой проверки чужой сайт увёл бы весь
+# трафик профиля через свой прокси. Туннели монитора всегда на 127.0.0.1.
+if [ -n "$proxy" ] && ! [[ "$proxy" =~ ^socks5://(127\.0\.0\.1|localhost):[0-9]{1,5}$ ]]; then
+    echo "Прокси разрешён только локальный (socks5://127.0.0.1:порт), получено: $proxy" >&2
+    exit 2
+fi
+
+BROWSER="$(pick_browser)"
+[ -n "$BROWSER" ] || { echo "Не найден браузер (chrome/chromium/firefox)" >&2; exit 1; }
 
 # Имя профиля из точки; без точки — общий профиль «direct». Санитизируем через
 # python с флагом Unicode, чтобы кириллица сохранилась (иначе tr схлопывал бы
@@ -57,10 +82,36 @@ safe_site="$(python3 -c "import sys,re; print(re.sub(r'[^\w.-]','_',sys.argv[1],
 profile="$PROFILE_ROOT/$safe_site"
 mkdir -p "$profile"
 
-args=( --user-data-dir="$profile" --no-first-run --no-default-browser-check
-       --class="DeviceMonitor-$safe_site" )
-if [ -n "$proxy" ]; then
-    args+=( --proxy-server="$proxy" )
-fi
-
-exec "$CHROME" "${args[@]}" "$url"
+case "$(basename "$BROWSER")" in
+  firefox*)
+    # Прокси живёт в user.js: Firefox перечитывает его при каждом старте, так
+    # что смена порта туннеля подхватывается сама, без правки профиля руками.
+    if [ -n "$proxy" ]; then
+        host="${proxy#socks5://}"; port="${host##*:}"; host="${host%%:*}"
+        cat > "$profile/user.js" <<PREFS
+user_pref("network.proxy.type", 1);
+user_pref("network.proxy.socks", "$host");
+user_pref("network.proxy.socks_port", $port);
+user_pref("network.proxy.socks_version", 5);
+// DNS резолвит выходной узел туннеля, изнутри сети объекта, а не наша машина.
+user_pref("network.proxy.socks_remote_dns", true);
+user_pref("network.proxy.allow_hijacking_localhost", true);
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("trailhead.firstrun.didSeeAboutWelcome", true);
+PREFS
+    else
+        rm -f "$profile/user.js"
+    fi
+    # --no-remote обязателен: иначе ссылка уедет в уже открытое окно обычного
+    # Firefox, мимо профиля с прокси, и камера снова не откроется.
+    exec "$BROWSER" --profile "$profile" --no-remote --new-window "$url"
+    ;;
+  *)
+    args=( --user-data-dir="$profile" --no-first-run --no-default-browser-check
+           --class="DeviceMonitor-$safe_site" )
+    [ -n "$proxy" ] && args+=( --proxy-server="$proxy" )
+    exec "$BROWSER" "${args[@]}" "$url"
+    ;;
+esac

@@ -68,15 +68,14 @@
       "host": "10.30.205.243",
       "ports": [
         8833,
-        8001,
-        22
+        8001
       ],
       "scheme": "http",
       "web_port": 8833,
       "path": "/admin/",
       "username": "",
       "password_enc": "",
-      "note": ""
+      "note": "порт 22 намеренно не указан: TCP-проба без SSH-хендшейка каждый круг опроса пишет в лог sshd «Did not receive identification string» и ловит бан fail2ban — монитор отрезает себе доступ к серверу, который проверяет"
     }
   ]
 }

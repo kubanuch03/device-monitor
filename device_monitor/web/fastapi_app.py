@@ -12,7 +12,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -147,9 +147,30 @@ def state():
     return _unwrap(api.state(core()))
 
 
+@app.get("/api/v1/sites/{name}/streams", dependencies=[Depends(require_auth)])
+def site_streams(name: str):
+    return _unwrap(api.stream_names(core(), name))
+
+
 @app.get("/api/v1/health")
 def health():
     return {"ok": True, "time": api.now_iso()}
+
+
+@app.get("/api/v1/export", dependencies=[Depends(require_auth)])
+def export_data(secrets: bool = False):
+    # Отдаём файлом: браузер сохранит его как есть, имя с датой.
+    body = _unwrap(api.export_data(core(), secrets))
+    stamp = body["exported_at"][:10]
+    return JSONResponse(
+        content=body,
+        headers={"Content-Disposition": f'attachment; filename="device-monitor-{stamp}.json"'},
+    )
+
+
+@app.post("/api/v1/import", dependencies=[Depends(require_auth)])
+def import_data(payload: dict = Body(...)):
+    return _unwrap(api.import_data(core(), payload))
 
 
 @app.post("/api/v1/recheck", dependencies=[Depends(require_auth)])
@@ -193,12 +214,12 @@ def inspect(device_id: str):
 
 @app.post("/api/v1/sites", dependencies=[Depends(require_auth)])
 def create_site(body: SiteIn):
-    return _unwrap(api.create_site(core(), body.model_dump()))
+    return _unwrap(api.create_site(core(), body.model_dump(exclude_none=True)))
 
 
 @app.put("/api/v1/sites/{name}", dependencies=[Depends(require_auth)])
 def update_site(name: str, body: SiteIn):
-    return _unwrap(api.update_site(core(), name, body.model_dump()))
+    return _unwrap(api.update_site(core(), name, body.model_dump(exclude_none=True)))
 
 
 @app.delete("/api/v1/sites/{name}", dependencies=[Depends(require_auth)])
@@ -225,7 +246,22 @@ def delete_category(site: str, name: str):
 
 # -- статика и страницы --------------------------------------------------------
 
-app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static")
+class RevalidatedStatic(StaticFiles):
+    """Статика с обязательной перепроверкой.
+
+    Без Cache-Control браузер кэширует файлы «на глаз» и после обновления
+    сервиса продолжает гонять старый app.js: новые кнопки и пути API не
+    появляются. no-cache не отключает кэш, а заставляет спросить сервер -
+    по ETag ответ 304 без тела, так что это почти бесплатно.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", RevalidatedStatic(directory=str(config.STATIC_DIR)), name="static")
 
 
 @app.get("/")
@@ -233,4 +269,6 @@ def index(request: Request):
     token = request.cookies.get(config.SESSION_COOKIE)
     authed = not config.AUTH_ENABLED or SESSIONS.valid(token)
     page = "index.html" if authed else "login.html"
-    return FileResponse(config.STATIC_DIR / page)
+    # no-cache обязателен: по одному адресу отдаются две разные страницы, и
+    # закэшированная форма входа показывалась бы уже вошедшему.
+    return FileResponse(config.STATIC_DIR / page, headers={"Cache-Control": "no-cache"})

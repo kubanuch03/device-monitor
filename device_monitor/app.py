@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from device_monitor import config
-from device_monitor.domain.models import Device
+from device_monitor.domain.models import Device, Site
 from device_monitor.probing.monitor import Monitor
 from device_monitor.security import hash_password
 from device_monitor.storage.sqlalchemy_store import SqlAlchemyStorage
@@ -58,17 +58,27 @@ def migrate_json(storage, path: Path) -> int:
     for site in raw.get("sites") or []:
         if isinstance(site, dict) and site.get("name"):
             try:
-                storage.add_site(str(site["name"]), str(site.get("note") or ""))
-            except Exception:
-                pass
+                storage.add_site(Site(
+                    name=str(site["name"]),
+                    note=str(site.get("note") or ""),
+                    proxy=str(site.get("proxy") or ""),
+                    stream_base=str(site.get("stream_base") or ""),
+                    username=str(site.get("username") or ""),
+                ))
+            except Exception as exc:
+                # Раньше здесь стоял голый `pass`, и перенос точки мог провалиться
+                # молча: устройство всё равно создавало точку с тем же именем через
+                # _ensure_refs, но уже пустую - без заметки, прокси и адреса go2rtc.
+                # Данные терялись так, что заметить это было невозможно.
+                print(f"[migrate] точка {site['name']!r}: {exc}", flush=True)
     for category in raw.get("categories") or []:
         if isinstance(category, dict) and category.get("site") and category.get("name"):
             try:
                 storage.add_category(
                     str(category["site"]), str(category["name"]), str(category.get("note") or "")
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[migrate] категория {category['name']!r}: {exc}", flush=True)
 
     moved = 0
     for item in raw.get("devices") or []:
@@ -89,6 +99,9 @@ def migrate_json(storage, path: Path) -> int:
                     username=str(item.get("username") or ""),
                     password_enc=str(item.get("password_enc") or ""),
                     note=str(item.get("note") or ""),
+                    open_url=str(item.get("open_url") or ""),
+                    stream_name=str(item.get("stream_name") or ""),
+                    use_site_creds=bool(item.get("use_site_creds") or False),
                 )
             )
             moved += 1

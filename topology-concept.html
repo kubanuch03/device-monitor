@@ -1,0 +1,398 @@
+<title>Пульт диспетчера</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg: #0b0f14;
+    --panel: #121820;
+    --panel-2: #1a222c;
+    --line: #2e3944;
+    --line-soft: #212a34;
+    --text: #e7edf3;
+    --text-dim: #8a97a6;
+    --text-faint: #566270;
+    --accent: #43b8d6;
+    --accent-glow: rgba(67,184,214,.55);
+    --ok: #4fbf7a;
+    --ok-glow: rgba(79,191,122,.5);
+    --warn: #e0a840;
+    --down: #e15757;
+    --down-glow: rgba(225,87,87,.45);
+    --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    padding: 28px 28px 40px;
+    min-height: 100vh;
+  }
+  ::selection{ background: var(--accent-glow); }
+
+  a{ color: var(--accent); }
+
+  /* ---------- header ---------- */
+  .console-head{
+    display:flex; align-items:flex-end; justify-content:space-between; gap:20px;
+    flex-wrap:wrap;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 16px;
+    margin-bottom: 18px;
+  }
+  .brand{ display:flex; flex-direction:column; gap:4px; }
+  .brand .eyebrow{
+    font-family: var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+    color: var(--accent);
+  }
+  .brand h1{
+    font-family: var(--mono); font-weight:700; font-size: clamp(22px,3vw,30px);
+    margin:0; letter-spacing:.01em; text-wrap:balance;
+  }
+  .brand .sub{ font-size:13px; color: var(--text-dim); }
+
+  .head-right{ display:flex; align-items:center; gap:18px; }
+  .clock{
+    font-family: var(--mono); font-size:15px; color: var(--text-dim);
+    font-variant-numeric: tabular-nums; letter-spacing:.03em;
+  }
+  .summary-chip{
+    display:flex; align-items:center; gap:10px;
+    background: var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:8px 14px; font-family: var(--mono); font-size:13px;
+  }
+  .summary-chip b{ font-variant-numeric: tabular-nums; }
+  .summary-chip .ok-count{ color: var(--ok); }
+  .summary-chip .down-count{ color: var(--down); }
+  .summary-chip .sep{ color: var(--text-faint); }
+
+  /* ---------- legend ---------- */
+  .legend{
+    display:flex; flex-wrap:wrap; gap: 18px;
+    font-size:12px; color: var(--text-dim);
+    margin-bottom: 22px;
+  }
+  .legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .dot{ width:8px; height:8px; border-radius:50%; display:inline-block; flex:none; }
+  .dot.ok{ background:var(--ok); box-shadow:0 0 6px var(--ok-glow); }
+  .dot.down{ background:var(--down); }
+  .dot.agg{ background:transparent; border:1px solid var(--text-faint); }
+  .line-sample{ width:18px; height:0; border-top:2px dashed var(--accent); display:inline-block; }
+
+  /* ---------- offline banner ---------- */
+  .banner{
+    display:none;
+    align-items:flex-start; gap:10px;
+    background: linear-gradient(180deg, rgba(225,87,87,.14), rgba(225,87,87,.06));
+    border: 1px solid rgba(225,87,87,.4);
+    border-left: 3px solid var(--down);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    font-size: 13.5px;
+    line-height:1.5;
+  }
+  .banner.show{ display:flex; }
+  .banner .glyph{ font-family: var(--mono); color: var(--down); font-weight:700; }
+  .banner b{ color:#fff; }
+
+  /* ---------- grid ---------- */
+  .grid{
+    display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 18px;
+  }
+
+  .card{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 18px 16px;
+    display:flex; flex-direction:column; gap:12px;
+    transition: border-color .25s ease;
+  }
+  .card[data-incident="1"]{ border-color: rgba(225,87,87,.45); }
+
+  .card-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+  .card-head h2{
+    font-family: var(--mono); font-size:16px; margin:0 0 3px; letter-spacing:.01em;
+  }
+  .card-head .addr{ font-family: var(--mono); font-size:11.5px; color: var(--text-faint); }
+
+  .chip{
+    font-family: var(--mono); font-size:11px; letter-spacing:.02em;
+    padding: 3px 9px; border-radius: 999px; white-space:nowrap;
+    border:1px solid transparent;
+  }
+  .chip.up{ color: var(--ok); background: rgba(79,191,122,.12); border-color: rgba(79,191,122,.3); }
+  .chip.down{ color: var(--down); background: rgba(225,87,87,.14); border-color: rgba(225,87,87,.35); }
+  .chip.route{ color: var(--accent); background: rgba(67,184,214,.12); border-color: rgba(67,184,214,.3); }
+
+  .diagram{ width:100%; height:auto; display:block; }
+  .trunk{ stroke: var(--line); stroke-width:2; fill:none; }
+  .trunk.flow{ stroke: var(--accent); stroke-dasharray: 4 5; animation: flow 1.1s linear infinite; }
+  .trunk.broken{ stroke: var(--down); stroke-dasharray: 3 4; opacity:.7; }
+  @keyframes flow{ to{ stroke-dashoffset: -18; } }
+
+  .hub-ring{ fill:none; stroke: var(--accent); stroke-width:1.5; opacity:.55; }
+  .hub-ring.pulse{ animation: ring 2.2s ease-out infinite; }
+  @keyframes ring{
+    0%{ r:13; opacity:.6; }
+    100%{ r:24; opacity:0; }
+  }
+  .hub{ fill: var(--panel-2); stroke: var(--accent); stroke-width:2; }
+  .hub.broken{ stroke: var(--down); }
+
+  .spoke{ stroke: var(--line-soft); stroke-width:1.5; }
+  .node{ stroke-width:2; }
+  .node.ok{ fill: var(--panel-2); stroke: var(--ok); }
+  .node.down{ fill: var(--panel-2); stroke: var(--down); }
+  .node.agg{ fill: var(--panel-2); stroke: var(--text-faint); stroke-dasharray: 2 2; }
+  .node-label{ font-family: var(--mono); font-size:8.6px; fill: var(--text-dim); text-anchor:middle; }
+  .node-sub{ font-family: var(--mono); font-size:7.6px; fill: var(--text-faint); text-anchor:middle; font-variant-numeric: tabular-nums; }
+  .via-label{ font-family: var(--mono); font-size:8px; fill: var(--text-faint); }
+
+  .devlist{ display:flex; flex-direction:column; gap:0; border-top:1px solid var(--line); }
+  .devrow{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding: 7px 0; border-bottom: 1px dashed var(--line-soft);
+    font-size: 12.5px;
+  }
+  .devrow:last-child{ border-bottom:none; }
+  .devrow .name{ display:flex; align-items:center; gap:8px; min-width:0; }
+  .devrow .name span.label{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .devrow .meta{ font-family: var(--mono); font-size:11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; flex:none; }
+
+  .card-actions{ display:flex; justify-content:flex-end; margin-top:2px; }
+  button.toggle{
+    font-family: var(--mono); font-size:11.5px; letter-spacing:.02em;
+    background: transparent; color: var(--text-dim);
+    border: 1px solid var(--line); border-radius: 7px;
+    padding: 7px 12px; cursor:pointer;
+    transition: all .15s ease;
+  }
+  button.toggle:hover{ border-color: var(--accent); color: var(--accent); }
+  button.toggle:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.toggle.armed{ border-color: rgba(225,87,87,.5); color: var(--down); }
+
+  footer{
+    margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--line);
+    font-size:12px; color: var(--text-faint); max-width: 65ch;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .trunk.flow{ animation:none; stroke-dasharray:none; }
+    .hub-ring.pulse{ animation:none; opacity:.3; }
+  }
+</style>
+
+<div class="console-head">
+  <div class="brand">
+    <div class="eyebrow">Device Monitor · концепт визуализации</div>
+    <h1>Пульт диспетчера</h1>
+    <div class="sub">Живая топология: монитор → туннель → устройства объекта</div>
+  </div>
+  <div class="head-right">
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="summary-chip" id="summary">—</div>
+  </div>
+</div>
+
+<div class="legend">
+  <span><i class="dot ok"></i> устройство в норме</span>
+  <span><i class="dot down"></i> недоступно</span>
+  <span><i class="dot agg"></i> сгруппировано (не раскрыто)</span>
+  <span><i class="line-sample"></i> активный опрос по туннелю</span>
+</div>
+
+<div class="banner" id="banner">
+  <span class="glyph">⚠</span>
+  <div id="banner-text"></div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<footer>
+  Концепт того, как мог бы выглядеть слой «живой топологии» поверх обычных карточек статуса —
+  та же идея из <code>probing/monitor.py</code> и <code>offlineBanner()</code> в <code>app.js</code>, просто в виде графа.
+  Нажми на кнопку у Балыкчы — она честно воспроизводит логику реального баннера из дашборда.
+</footer>
+
+<script>
+const SITES = [
+  {
+    id: 'balykchy',
+    name: 'Балыкчы Автовокзал',
+    addr: '10.20.4.2',
+    routeLabel: 'туннель',
+    incidentToggle: true,
+    devices: [
+      { name: 'Камера ANPR, Въезд 1', short: 'Въезд 1', ms: 16, status: 'ok' },
+      { name: 'Камера ANPR, Въезд 2', short: 'Въезд 2', ms: 16, status: 'ok' },
+      { name: 'Камера ANPR, Выезд 1', short: 'Выезд 1', ms: 16, status: 'ok' },
+      { name: 'Камера ANPR, Выезд 2', short: 'Выезд 2', ms: 16, status: 'ok' },
+      { name: 'Роутер MikroTik hAP ac²', short: 'Роутер', ms: 18, status: 'ok' },
+      { name: 'Сервер объекта (SmartParking)', short: 'Сервер', ms: 14, status: 'ok' },
+      { name: 'Неопознанный хост .159', short: '.159', ms: null, status: 'down' },
+    ],
+  },
+  {
+    id: 'archa',
+    name: 'ТЦ Ала-Арча',
+    addr: '10.30.205.0/24',
+    routeLabel: 'маршрут: офисный шлюз',
+    routeIsGateway: true,
+    incidentToggle: false,
+    devices: [
+      { name: 'Камера, Въезд 1 (10.30.205.66)', short: 'Въезд 1', status: 'ok' },
+      { name: 'Камера, Въезд 2 (10.30.205.24)', short: 'Въезд 2', status: 'ok' },
+      { name: 'Камера, Выезд 1 (10.30.205.68)', short: 'Выезд 1', status: 'ok' },
+      { name: 'Камера, Выезд 2 (10.30.205.67)', short: 'Выезд 2', status: 'ok' },
+      { name: '+10 других устройств объекта', short: '+10', status: 'agg' },
+    ],
+  },
+  {
+    id: 'kyzylkiya',
+    name: 'МТО Кызыл-Кия',
+    addr: '192.168.158.0/24',
+    routeLabel: 'туннель',
+    incidentToggle: false,
+    devices: [
+      { name: 'Камера, въезд (.5)', short: 'Въезд', status: 'ok' },
+      { name: 'Камера, выезд (.6)', short: 'Выезд', status: 'ok' },
+      { name: 'Камера КПП, въезд (.17)', short: 'КПП вход', status: 'ok' },
+      { name: 'Камера КПП, выезд (.18)', short: 'КПП выход', status: 'ok' },
+    ],
+  },
+];
+
+const state = {}; // id -> { down: bool }
+SITES.forEach(s => state[s.id] = { down: false });
+
+function buildDiagram(site, tunnelDown){
+  const W = 320, H = 190, hubX = W/2, hubY = 42, rowY = 150;
+  const devs = site.devices;
+  const n = devs.length;
+  const marginX = 32;
+  const step = n > 1 ? (W - marginX*2) / (n - 1) : 0;
+
+  let svg = `<svg class="diagram" viewBox="0 0 ${W} ${H}" role="img" aria-label="Топология ${site.name}">`;
+
+  // trunk (incoming poll from the monitor host)
+  const trunkCls = tunnelDown ? 'trunk broken' : 'trunk flow';
+  svg += `<line x1="${hubX}" y1="2" x2="${hubX}" y2="${hubY-13}" class="${trunkCls}"/>`;
+  svg += `<text x="${hubX+8}" y="14" class="via-label">опрос</text>`;
+
+  // hub
+  if (!tunnelDown) svg += `<circle cx="${hubX}" cy="${hubY}" r="13" class="hub-ring pulse"/>`;
+  svg += `<circle cx="${hubX}" cy="${hubY}" r="10" class="hub${tunnelDown ? ' broken' : ''}"/>`;
+
+  // spokes + device nodes
+  devs.forEach((d, i) => {
+    const x = n > 1 ? marginX + step*i : hubX;
+    const down = tunnelDown ? d.status !== 'agg' : d.status === 'down';
+    const cls = d.status === 'agg' ? 'agg' : (down ? 'down' : 'ok');
+    svg += `<line x1="${hubX}" y1="${hubY+9}" x2="${x}" y2="${rowY-9}" class="spoke"/>`;
+    svg += `<circle cx="${x}" cy="${rowY}" r="9" class="node ${cls}"/>`;
+    svg += `<text x="${x}" y="${rowY+18}" class="node-label">${d.short}</text>`;
+    if (d.ms != null) {
+      svg += `<text x="${x}" y="${rowY+28}" class="node-sub">${down ? '—' : d.ms + 'мс'}</text>`;
+    }
+  });
+
+  svg += `</svg>`;
+  return svg;
+}
+
+function counts(site, tunnelDown){
+  let up = 0, down = 0;
+  site.devices.forEach(d => {
+    if (d.status === 'agg') { up += 10; return; } // ala-archa aggregate, known-good
+    const isDown = tunnelDown || d.status === 'down';
+    isDown ? down++ : up++;
+  });
+  return { up, down };
+}
+
+function render(){
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  let totalUp = 0, totalDown = 0;
+
+  SITES.forEach(site => {
+    const tunnelDown = state[site.id].down;
+    const { up, down } = counts(site, tunnelDown);
+    totalUp += up; totalDown += down;
+
+    const chipCls = site.routeIsGateway ? 'route' : (tunnelDown ? 'down' : 'up');
+    const chipText = site.routeIsGateway
+      ? site.routeLabel
+      : `${site.routeLabel}: ${tunnelDown ? 'down' : 'up'}`;
+
+    const card = document.createElement('section');
+    card.className = 'card';
+    card.dataset.incident = tunnelDown ? '1' : '0';
+    card.innerHTML = `
+      <div class="card-head">
+        <div>
+          <h2>${site.name}</h2>
+          <div class="addr">${site.addr}</div>
+        </div>
+        <span class="chip ${chipCls}">${chipText}</span>
+      </div>
+      ${buildDiagram(site, tunnelDown)}
+      <div class="devlist">
+        ${site.devices.map(d => {
+          const isDown = d.status === 'agg' ? false : (tunnelDown || d.status === 'down');
+          const dotCls = d.status === 'agg' ? 'agg' : (isDown ? 'down' : 'ok');
+          const meta = d.status === 'agg' ? '' : (d.ms != null ? (isDown ? '—' : d.ms + ' мс') : (isDown ? 'нет ответа' : 'ok'));
+          return `<div class="devrow">
+            <span class="name"><i class="dot ${dotCls}"></i><span class="label">${d.name}</span></span>
+            <span class="meta">${meta}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      ${site.incidentToggle ? `<div class="card-actions">
+        <button class="toggle ${tunnelDown ? 'armed' : ''}" id="btn-${site.id}">
+          ${tunnelDown ? 'Восстановить связь' : 'Смоделировать обрыв VPN'}
+        </button>
+      </div>` : ''}
+    `;
+    grid.appendChild(card);
+
+    if (site.incidentToggle) {
+      card.querySelector(`#btn-${site.id}`).addEventListener('click', () => {
+        state[site.id].down = !state[site.id].down;
+        render();
+      });
+    }
+  });
+
+  document.getElementById('summary').innerHTML =
+    `<span class="ok-count">${totalUp} up</span><span class="sep">·</span><span class="down-count">${totalDown} down</span>`;
+
+  const anyDown = SITES.some(s => state[s.id].down);
+  const bannerEl = document.getElementById('banner');
+  const downNames = SITES.filter(s => state[s.id].down).map(s => s.name);
+  if (anyDown) {
+    document.getElementById('banner-text').innerHTML =
+      `Нет связи с объектом <b>«${downNames.join('», «')}»</b>. Проверьте, включён ли VPN до объекта
+       (или поднят ли SSH-туннель). Пока связи нет, устройства показываются недоступными, даже если они работают.`;
+    bannerEl.classList.add('show');
+  } else {
+    bannerEl.classList.remove('show');
+  }
+}
+
+function tickClock(){
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  document.getElementById('clock').textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+tickClock();
+setInterval(tickClock, 1000);
+render();
+</script>

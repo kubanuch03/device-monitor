@@ -17,18 +17,25 @@ HOST_RE = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
 
 
 class SiteIn(BaseModel):
+    """None у любого поля, кроме имени, означает «не менять» при правке точки,
+    поэтому роут передаёт model_dump(exclude_none=True). Дефолт "" здесь был бы
+    ошибкой: правка одного поля молча стирала бы прокси и заметку точки."""
     name: str = Field(min_length=1, max_length=120)
-    note: str = Field(default="", max_length=400)
-    proxy: str = Field(default="", max_length=200)
+    note: str | None = Field(default=None, max_length=400)
+    proxy: str | None = Field(default=None, max_length=200)
+    stream_base: str | None = Field(default=None, max_length=200)
+    username: str | None = Field(default=None, max_length=120)
+    # None/"" — не менять; False — забыть; строка — задать (как у устройства).
+    password: str | bool | None = None
 
     @field_validator("name", "note", "proxy")
     @classmethod
-    def _strip(cls, v: str) -> str:
-        return re.sub(r"[\x00-\x1f\x7f]", "", v).strip()
+    def _strip(cls, v: str | None) -> str | None:
+        return None if v is None else re.sub(r"[\x00-\x1f\x7f]", "", v).strip()
 
     @field_validator("proxy")
     @classmethod
-    def _check_proxy(cls, v: str) -> str:
+    def _check_proxy(cls, v: str | None) -> str | None:
         if v:
             try:
                 parse_proxy(v)
@@ -67,6 +74,9 @@ class DeviceIn(BaseModel):
     # None/"" — не менять; False — забыть; строка — задать. Логика в clean_device.
     password: str | bool | None = None
     note: str | None = Field(default=None, max_length=400)
+    open_url: str | None = Field(default=None, max_length=300)
+    stream_name: str | None = Field(default=None, max_length=120)
+    use_site_creds: bool | None = None
 
 
 class LoginIn(BaseModel):

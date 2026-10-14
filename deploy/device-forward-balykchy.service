@@ -1,0 +1,42 @@
+# Постоянный проброс локальных портов до камер Балыкчы через SSH-туннель.
+#
+# В отличие от device-tunnel@.service (SOCKS-прокси для проверки доступности
+# сервисом), этот юнит даёт КОНКРЕТНЫЕ адреса для входа из обычного браузера:
+# 127.0.0.1:1802N открывает камеру на реальном порту 80 за SSH, без настройки
+# прокси в браузере и без обработчика devmon://. Такие адреса прописаны в
+# поле open_url у устройств точки «Балыкчы» в панели.
+#
+# Установка (нужен root, пишет в /etc/systemd):
+#   sudo cp deploy/device-forward-balykchy.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now device-forward-balykchy
+#
+# Специфично для Балыкчы: адреса и порты вшиты, не параметризованы, как в
+# device-tunnel@.service. Для другого объекта - скопировать и поменять -L.
+
+[Unit]
+Description=Device Monitor: прямой проброс портов до камер Балыкчы
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/autossh -M 0 -N \
+    -o ControlMaster=no -o ControlPath=none \
+    -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -o StrictHostKeyChecking=accept-new \
+    -L 127.0.0.1:18021:173.18.11.21:80 \
+    -L 127.0.0.1:18022:173.18.11.22:80 \
+    -L 127.0.0.1:18023:173.18.11.23:80 \
+    -L 127.0.0.1:18024:173.18.11.24:80 \
+    balykchy
+
+Environment=AUTOSSH_GATETIME=0
+Restart=always
+RestartSec=10
+
+# Нужен ssh-ключ и ~/.ssh/config пользователя (алиас balykchy -> parking@10.20.4.2).
+User=pc-kaltynbek-uulu
+
+[Install]
+WantedBy=multi-user.target
