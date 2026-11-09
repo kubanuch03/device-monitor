@@ -195,6 +195,11 @@ class AlertService:
             "heartbeat_error": self.heartbeat.last_error,
         }
 
+    def rules_summary(self) -> dict:
+        """Правила без запроса в Telegram (для частых запросов трея)."""
+        settings = self._settings()
+        return {"down_confirm": int(settings["down_confirm"])}
+
     def configured(self) -> bool:
         """Дёшево, без запроса в Telegram: дёргается на каждый /state."""
         settings = self._settings()

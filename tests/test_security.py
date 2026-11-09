@@ -137,3 +137,36 @@ def test_first_login_password_not_in_log(tmp_path, monkeypatch, capsys):
     App(SqlAlchemyStorage(tmp_path / "monitor.db"))
     password = config.FIRST_LOGIN_FILE.read_text("utf-8").split("пароль: ")[1].split()[0]
     assert password not in capsys.readouterr().out
+
+
+def test_tray_summary_with_token_has_no_secrets(client, tmp_path, monkeypatch):
+    from device_monitor import config
+    from device_monitor.web.fastapi_app import core
+    client.post("/api/v1/login", json={"username": "admin", "password": "test-secret"})
+    client.post("/api/v1/sites", json={"name": "Т", "username": "u", "password": "site-pw-9"})
+    client.post("/api/v1/devices", json={"site": "Т", "name": "Камера", "host": "10.0.0.1",
+                                         "ports": [80], "username": "a", "password": "dev-pw-9"})
+    client.post("/api/v1/logout")
+    monkeypatch.setattr(config, "TRAY_TOKEN_FILE", tmp_path / "tray-token")
+    token = core().tray_token()
+    assert stat.S_IMODE((tmp_path / "tray-token").stat().st_mode) == 0o600
+
+    r = client.get("/api/v1/tray", headers={"X-Tray-Token": token})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1 and "confirm_seconds" in body
+    assert "pw-9" not in r.text and "password" not in r.text
+
+
+def test_tray_wrong_token_rejected(client, tmp_path, monkeypatch):
+    from device_monitor import config
+    monkeypatch.setattr(config, "TRAY_TOKEN_FILE", tmp_path / "tray-token")
+    assert client.get("/api/v1/tray", headers={"X-Tray-Token": "x" * 43}).status_code == 401
+    assert client.get("/api/v1/tray").status_code == 401
+
+
+def test_tray_non_ascii_token_is_401_not_500(client, tmp_path, monkeypatch):
+    from device_monitor import config
+    monkeypatch.setattr(config, "TRAY_TOKEN_FILE", tmp_path / "tray-token")
+    r = client.get("/api/v1/tray", headers={"X-Tray-Token": "ключ".encode()})
+    assert r.status_code == 401

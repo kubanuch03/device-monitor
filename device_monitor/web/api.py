@@ -107,6 +107,38 @@ def state(app) -> tuple[int, dict]:
     }
 
 
+# -- значок в трее ------------------------------------------------------------
+
+def tray_summary(app) -> tuple[int, dict]:
+    """Сводка для значка в трее: только кто лежит и с каких пор. Ни паролей,
+    ни учёток - ключ трея лежит в файле и должен давать минимум."""
+    live, updated_at = app.monitor.snapshot()
+    mutes = app.alerts.mutes_public()
+    settings = app.alerts.rules_summary()
+    down = []
+    total = up = 0
+    for device in app.storage.devices():
+        status = live.get(device.id, {}).get("status", "unknown")
+        total += 1
+        up += status == "up"
+        if status == "down":
+            down.append({
+                "id": device.id, "name": device.name, "site": device.site, "host": device.host,
+                "since": live[device.id].get("since"),
+                "muted": bool(mutes.get(f"device:{device.id}") or mutes.get(f"site:{device.site}")),
+            })
+    down.sort(key=lambda d: (d["site"].casefold(), d["name"].casefold()))
+    return HTTPStatus.OK, {
+        "total": total, "up": up, "down": down, "updated_at": updated_at,
+        # Сразу после запуска сервиса круга ещё не было: «никто не лежит»
+        # тогда значит «не знаем», и трей не должен рапортовать «вернулись».
+        "ready": updated_at is not None,
+        # Через сколько секунд падение считать настоящим - то же правило, что
+        # у Telegram, чтобы трей не мигал уведомлениями на каждый сбой.
+        "confirm_seconds": settings["down_confirm"] * POLL_INTERVAL,
+    }
+
+
 # -- оповещения ---------------------------------------------------------------
 
 def alert_settings(app) -> tuple[int, dict]:

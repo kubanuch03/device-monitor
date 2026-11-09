@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -206,6 +207,19 @@ def alert_chats():
 @app.post("/api/v1/mutes", dependencies=[Depends(require_auth)])
 def set_mute(body: MuteIn):
     return _unwrap(api.set_mute(core(), body.model_dump()))
+
+
+@app.get("/api/v1/tray")
+def tray(request: Request):
+    """Значок в трее ходит с ключом из data/tray-token, а не с паролем панели:
+    пароль трею не нужен, а сводка «кто лежит» ничего секретного не раскрывает."""
+    given = request.headers.get("X-Tray-Token", "")
+    # Сравниваем байты: str-версия compare_digest падает на не-ASCII
+    # заголовке (TypeError -> 500 любому, кто дошёл до порта).
+    if not (given and hmac.compare_digest(given.encode("utf-8", "replace"),
+                                          core().tray_token().encode())):
+        require_auth(request)
+    return _unwrap(api.tray_summary(core()))
 
 
 @app.get("/api/v1/health")

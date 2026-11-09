@@ -8,6 +8,9 @@
   // Тема - до стилей, иначе выбранная вручную тема мигала бы системной при загрузке.
   try { const t = localStorage.getItem("dm_theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 </script>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#0d6a73">
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -54,9 +57,16 @@
   <div id="view"></div>
   <div id="empty" class="empty" hidden>
     <h2>Пока ни одного устройства</h2>
-    <p>Добавьте камеру, домофон, коммутатор или сервер — сервис начнёт проверять
-       его доступность и покажет, когда он пропал.</p>
-    <button type="button" class="primary" id="add-first">Добавить первое устройство</button>
+    <p>Сначала подключите VPN до объектов — без него оборудование будет «не отвечает».</p>
+    <ol class="onboarding">
+      <li><b>Есть файл от коллеги?</b> Загрузите его — точки, категории и устройства появятся
+          сразу (пароли в обычном экспорте не передаются, их впишете сами).
+          <button type="button" id="import-first">Импорт файла</button></li>
+      <li><b>Или добавьте вручную</b> камеру, домофон, коммутатор или сервер.
+          <button type="button" class="primary" id="add-first">Добавить первое устройство</button></li>
+      <li><b>Оповещения.</b> Чтобы узнавать о падениях в Telegram — токен бота и группа.
+          <button type="button" id="alerts-first">Настроить оповещения</button></li>
+    </ol>
   </div>
 </main>
 

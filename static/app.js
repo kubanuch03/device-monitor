@@ -1893,6 +1893,10 @@ const accountEditor = document.getElementById("account-editor");
 const accountForm = document.getElementById("account-form");
 const accountError = document.getElementById("account-error");
 
+// Шаги пустого экрана ведут на те же действия, что и кнопки панели.
+document.getElementById("import-first").onclick = () => document.getElementById("import").click();
+document.getElementById("alerts-first").onclick = () => document.getElementById("alerts").click();
+
 document.getElementById("account").onclick = async () => {
   accountError.hidden = true;
   accountForm.reset();

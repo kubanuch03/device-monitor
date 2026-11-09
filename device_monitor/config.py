@@ -41,6 +41,9 @@ MONITOR_ENABLED = os.environ.get("DM_DISABLE_MONITOR", "") != "1"
 DEFAULT_USERNAME = os.environ.get("DM_DEFAULT_USERNAME", "admin").strip() or "admin"
 DEFAULT_PASSWORD = os.environ.get("DM_DEFAULT_PASSWORD", "")
 FIRST_LOGIN_FILE = DATA_DIR / "first-login.txt"
+# Ключ значка в трее: он читает только сводку «кто лежит» (/api/v1/tray), без
+# паролей. Файл 600 в каталоге данных - прочесть его может только владелец.
+TRAY_TOKEN_FILE = DATA_DIR / "tray-token"
 
 # Перебор пароля входа: столько неудач с одного адреса за окно - и вход
 # с него закрыт до конца окна.

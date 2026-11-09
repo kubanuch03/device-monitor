@@ -726,3 +726,8 @@ button.warn { border-color: var(--down); color: var(--down); }
   .topbar-actions { gap: 6px; }
   .topbar-actions > button, .view-toggle button { padding: 5px 9px; font-size: 12.5px; }
 }
+
+/* Первые шаги на пустом экране */
+.onboarding { text-align: left; max-width: 34rem; margin: 18px auto 0; padding-left: 20px;
+  display: grid; gap: 14px; line-height: 1.45; }
+.onboarding button { display: block; margin-top: 6px; }

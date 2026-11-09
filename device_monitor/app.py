@@ -46,8 +46,27 @@ class App:
             print(f"[auth] первый вход: логин и пароль в {config.FIRST_LOGIN_FILE}", flush=True)
         self.storage.set_user(config.DEFAULT_USERNAME, hash_password(password))
 
+    @staticmethod
+    def tray_token() -> str:
+        """Ключ для значка в трее; создаётся при первом обращении."""
+        path = config.TRAY_TOKEN_FILE
+        try:
+            token = path.read_text("utf-8").strip()
+        except OSError:
+            token = ""
+        if len(token) < 32:
+            token = secrets.token_urlsafe(32)
+            try:
+                write_private(path, token + "\n")
+            except FileExistsError:
+                # Параллельный запрос успел создать файл - берём его ключ,
+                # иначе выданный здесь не совпал бы с записанным.
+                token = path.read_text("utf-8").strip()
+        return token
+
     def start(self) -> None:
         if config.MONITOR_ENABLED:
+            self.tray_token()
             self.alerts.start()
             self.relay.start()
             self.monitor.start()
