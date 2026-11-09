@@ -112,7 +112,11 @@ class RelayManager:
         # только слабо, и задача, ждущая сокет, вместе с транспортом образует
         # недостижимый цикл - сборщик мусора её уничтожал посреди передачи
         # («Task was destroyed but it is pending»), и страница камеры рвалась.
-        self._conns: set[asyncio.Task] = set()
+        # Задача соединения -> сокет клиента. Сокет закрывается при остановке
+        # напрямую: задача, отменённая до первого шага, свой finally не
+        # выполняет вовсе, и сокет иначе остался бы открытым.
+        self._conns: dict[asyncio.Task, asyncio.StreamWriter] = {}
+        self._closing = False
         self._servers: dict[int, asyncio.base_events.Server] = {}
         # port -> (host, port, proxy); читается обработчиком в момент коннекта,
         # поэтому смена адреса устройства подхватывается без перезапуска порта.
@@ -124,6 +128,7 @@ class RelayManager:
     # -- жизненный цикл ----------------------------------------------------------
 
     def start(self) -> None:
+        self._closing = False
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, name="relay", daemon=True)
         self._thread.start()
@@ -143,13 +148,38 @@ class RelayManager:
             loop.close()
 
     async def _close_all(self) -> None:
+        # Соединение, принятое после этой точки, закрывается сразу в _accept:
+        # иначе принятое в последний момент успевало зарегистрироваться уже
+        # после закрытия остальных и висело.
+        self._closing = True
+        loop = asyncio.get_running_loop()
+        # Сначала перестаём принимать, но слушатели пока не закрываем. Сокет,
+        # который asyncio уже принял, превращается в транспорт отдельной
+        # задачей; если к тому моменту server.close() обнулил список сокетов,
+        # транспорт падает на внутреннем assert, asyncio молча глотает ошибку,
+        # и принятый сокет висит открытым. Два прохода цикла - и такие задачи
+        # успевают дойти до _accept, который по флагу закроет соединение.
+        for server in self._servers.values():
+            for sock in server.sockets:
+                loop.remove_reader(sock.fileno())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
         for server in self._servers.values():
             server.close()
         self._servers.clear()
-        for task in list(self._conns):
+        for task, writer in list(self._conns.items()):
             task.cancel()
-        if self._conns:
-            await asyncio.wait(self._conns, timeout=2)
+            # abort, а не close: close() ждёт, пока уйдёт буфер записи, а при
+            # мёртвом туннеле пир не читает - сокет так и не закрылся бы.
+            writer.transport.abort()
+        me = asyncio.current_task()
+        deadline = loop.time() + 3.5      # stop() ждёт _close_all не дольше 5 с
+        while loop.time() < deadline:
+            pending = [t for t in asyncio.all_tasks() if t is not me and not t.done()]
+            if not pending:
+                break
+            await asyncio.wait(pending, timeout=0.05)
+        await asyncio.sleep(0.05)   # очередь закрытия транспортов
 
     # -- что пробрасывать ---------------------------------------------------------
 
@@ -211,7 +241,7 @@ class RelayManager:
                 continue
             try:
                 self._servers[port] = await asyncio.start_server(
-                    lambda r, w, p=port: self._track(self._handle(p, r, w)), "127.0.0.1", port)
+                    lambda r, w, p=port: self._accept(p, r, w), "127.0.0.1", port)
             except OSError as exc:
                 self._failed.add(port)
                 print(f"[relay] порт {port} занят другим процессом: {exc}", flush=True)
@@ -219,10 +249,15 @@ class RelayManager:
 
     # -- соединение ---------------------------------------------------------------
 
-    def _track(self, coro) -> None:
-        task = self._loop.create_task(coro)
-        self._conns.add(task)
-        task.add_done_callback(self._conns.discard)
+    def _accept(self, port: int, reader, writer) -> None:
+        if self._closing:
+            writer.close()
+            return
+        # Цикл - текущий, а не self._loop: stop() обнуляет ссылку раньше, чем
+        # успевают зарегистрироваться уже принятые соединения.
+        task = asyncio.get_running_loop().create_task(self._handle(port, reader, writer))
+        self._conns[task] = writer
+        task.add_done_callback(lambda t: self._conns.pop(t, None))
 
     async def _handle(self, port: int, client_reader, client_writer) -> None:
         target = self._targets.get(port)
@@ -238,13 +273,25 @@ class RelayManager:
                      asyncio.create_task(_pipe(upstream_reader, client_writer))]
             # Нормальный конец одной стороны (EOF) - ждём вторую: ответ ещё
             # идёт. Ошибка или простой одной стороны - рвём обе.
-            await asyncio.wait(pipes, return_when=asyncio.FIRST_EXCEPTION)
+            done, _ = await asyncio.wait(pipes, return_when=asyncio.FIRST_EXCEPTION)
+            for pipe in done:      # забрать исключение - иначе шум в логе
+                if not pipe.cancelled():
+                    pipe.exception()
         except (OSError, ProxyError, UnicodeError, asyncio.TimeoutError,
                 asyncio.IncompleteReadError):
             pass   # устройство или туннель недоступны - браузер увидит обрыв
         finally:
             for pipe in pipes:
                 pipe.cancel()
-            for writer in (client_writer, upstream_writer):
-                if writer is not None:
-                    writer.close()
+            writers = [w for w in (client_writer, upstream_writer) if w is not None]
+            for writer in writers:
+                writer.close()
+            # close() лишь ставит закрытие в очередь и ждёт, пока уйдёт буфер
+            # записи. Не закрылось за секунду (пир не читает) - рвём силой.
+            # CancelledError здесь глотаем намеренно: если сюда пришли из-за
+            # отмены, исходная отмена всё равно пробросится после finally.
+            for writer in writers:
+                try:
+                    await asyncio.wait_for(writer.wait_closed(), 1)
+                except (Exception, asyncio.CancelledError):
+                    writer.transport.abort()

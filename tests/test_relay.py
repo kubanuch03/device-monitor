@@ -244,10 +244,39 @@ def test_stop_closes_live_connections_and_is_idempotent(silent_socks, tmp_path):
     client = socket.create_connection(("127.0.0.1", manager.ports()[cam(5).id]), timeout=5)
     client.sendall(b"hello")
     manager.stop()
-    assert client.recv(10) == b""        # соединение закрыто сервисом
+    # Закрыто сервисом: либо обычный EOF, либо RST (сокет закрыт с
+    # непрочитанными данными) - но не «висит».
+    try:
+        assert client.recv(10) == b""
+    except ConnectionResetError:
+        pass
     client.close()
     manager.stop()                        # второй stop - без зависания и ошибок
 
 
 def test_stop_without_start_is_noop(tmp_path):
     RelayManager(SqlAlchemyStorage(tmp_path / "m.db")).stop()
+
+
+
+def test_stop_race_leaves_no_open_sockets(silent_socks, tmp_path):
+    """Регрессия: соединение, принятое прямо перед stop(), оставалось
+    ESTABLISHED (asyncio молча ронял создание транспорта после server.close).
+    До исправления воспроизводилось примерно раз на 20 остановок."""
+    hung = []
+    for i in range(25):
+        manager = RelayManager(SqlAlchemyStorage(tmp_path / f"m{i}.db"), port_range=RANGE)
+        manager.start()
+        manager.sync([cam(5)], {"ККия": silent_socks})
+        client = socket.create_connection(("127.0.0.1", manager.ports()[cam(5).id]), timeout=3)
+        client.sendall(b"hello")
+        manager.stop()
+        try:
+            if client.recv(10) != b"":
+                hung.append(i)
+        except ConnectionResetError:
+            pass
+        except TimeoutError:
+            hung.append(i)
+        client.close()
+    assert hung == []
