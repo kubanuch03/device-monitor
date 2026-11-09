@@ -9,6 +9,8 @@
 /data/devices.json.migrated
 /data/*.tmp
 /data/*.bak
+# Сгенерированный пароль первого входа
+/data/first-login.txt
 
 # Пароль панели и любые локальные окружения
 .env

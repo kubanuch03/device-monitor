@@ -33,3 +33,13 @@ def auth(client):
     r = client.post("/api/v1/login", json={"username": "admin", "password": "test-secret"})
     assert r.status_code == 200
     return client
+
+
+@pytest.fixture(autouse=True)
+def _fresh_security_state():
+    """Счётчик неудачных входов и сессии - глобальные объекты процесса;
+    без сброса неудачи одного теста закрывали бы вход в следующем."""
+    from device_monitor.security import SESSIONS, THROTTLE
+    THROTTLE._fails.clear()
+    SESSIONS._tokens.clear()
+    yield

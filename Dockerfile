@@ -18,7 +18,7 @@ COPY static ./static
 RUN adduser --disabled-password --uid 10001 monitor && mkdir -p /app/data && chown -R monitor /app/data
 USER monitor
 
-ENV DM_HOST=0.0.0.0 \
+ENV DM_HOST=127.0.0.1 \
     DM_PORT=8890 \
     DM_DATA_DIR=/app/data \
     PYTHONUNBUFFERED=1

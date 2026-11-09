@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from device_monitor import config
 from device_monitor.app import App, migrate_json
 from device_monitor.domain.errors import ConflictError, ValidationError
-from device_monitor.security import SESSIONS, hash_password, verify_password
+from device_monitor.security import SESSIONS, THROTTLE, hash_password, verify_password
 from device_monitor.web import api
 from device_monitor.web.schemas import AccountIn, CategoryIn, DeviceIn, LoginIn, SiteIn
 
@@ -33,8 +32,7 @@ async def lifespan(app: FastAPI):
     application.start()
     APP_STATE["app"] = application
     print(
-        f"Device Monitor (FastAPI) готов · устройств: {len(application.storage.devices())} · "
-        f"вход: {'по паролю' if config.AUTH_ENABLED else 'открыт'}",
+        f"Device Monitor (FastAPI) готов · устройств: {len(application.storage.devices())}",
         flush=True,
     )
     try:
@@ -43,7 +41,20 @@ async def lifespan(app: FastAPI):
         application.stop()
 
 
-app = FastAPI(title="Device Monitor", version="1.0", lifespan=lifespan)
+# /docs и /openapi.json выключены: без входа они раскрывали бы всю карту API
+# любому, кто дошёл до порта.
+app = FastAPI(title="Device Monitor", version="1.0", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@app.middleware("http")
+async def _no_store_api(request: Request, call_next):
+    """Ответы API не кэшируются нигде: в них пароли (/secret, экспорт) и
+    живое состояние, которое из кэша было бы враньём."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 
 def core() -> App:
@@ -61,8 +72,6 @@ async def _validation_handler(request: Request, exc: ValidationError):
 # -- авторизация ---------------------------------------------------------------
 
 def require_auth(request: Request) -> None:
-    if not config.AUTH_ENABLED:
-        return
     token = request.cookies.get(config.SESSION_COOKIE)
     if not SESSIONS.valid(token):
         raise HTTPException(status_code=401, detail="Нужен вход")
@@ -94,17 +103,31 @@ def session(request: Request):
     }
 
 
+def _client_key(request: Request, scope: str) -> str:
+    return f"{scope}:{request.client.host if request.client else '-'}"
+
+
+def _check_throttle(key: str) -> None:
+    wait = THROTTLE.acquire(key)
+    if wait:
+        raise HTTPException(status_code=429, detail=f"Слишком много неудачных попыток. "
+                                                    f"Повторите через {wait} с",
+                            headers={"Retry-After": str(wait)})
+
+
 @app.post("/api/v1/login")
-def login(body: LoginIn, response: Response):
+def login(body: LoginIn, request: Request, response: Response):
+    key = _client_key(request, "login")
+    _check_throttle(key)
     user = core().storage.get_user()
     # Логин сверяем без учёта регистра, пароль — по хешу. Оба неверных случая
-    # (нет такого логина / неверный пароль) отвечают одинаково и с задержкой,
-    # чтобы не подсказывать перебору, что именно не так.
+    # (нет такого логина / неверный пароль) отвечают одинаково, чтобы не
+    # подсказывать перебору, что именно не так.
     ok = bool(user) and user["username"].casefold() == body.username.strip().casefold() \
         and verify_password(body.password, user["password_hash"])
     if not ok:
-        time.sleep(1)
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+    THROTTLE.reset(key)
     _set_cookie(response, SESSIONS.create())
     return {"ok": True}
 
@@ -112,15 +135,21 @@ def login(body: LoginIn, response: Response):
 @app.post("/api/v1/account", dependencies=[Depends(require_auth)])
 def change_account(body: AccountIn, request: Request):
     """Смена логина и/или пароля. Требует текущий пароль."""
+    key = _client_key(request, "account")
+    _check_throttle(key)
     user = core().storage.get_user()
     if not user or not verify_password(body.current_password, user["password_hash"]):
-        time.sleep(1)
         raise HTTPException(status_code=403, detail="Текущий пароль неверен")
+    THROTTLE.reset(key)
     new_username = (body.username or user["username"]).strip()
     if not new_username:
         raise HTTPException(status_code=400, detail="Логин не может быть пустым")
     new_hash = hash_password(body.new_password) if body.new_password else user["password_hash"]
     core().storage.set_user(new_username, new_hash)
+    if body.new_password:
+        SESSIONS.drop_others(request.cookies.get(config.SESSION_COOKIE))
+        # Сгенерированный пароль первого входа больше не действует.
+        config.FIRST_LOGIN_FILE.unlink(missing_ok=True)
     return {"ok": True, "username": new_username}
 
 
@@ -267,7 +296,7 @@ app.mount("/static", RevalidatedStatic(directory=str(config.STATIC_DIR)), name="
 @app.get("/")
 def index(request: Request):
     token = request.cookies.get(config.SESSION_COOKIE)
-    authed = not config.AUTH_ENABLED or SESSIONS.valid(token)
+    authed = SESSIONS.valid(token)
     page = "index.html" if authed else "login.html"
     # no-cache обязателен: по одному адресу отдаются две разные страницы, и
     # закэшированная форма входа показывалась бы уже вошедшему.

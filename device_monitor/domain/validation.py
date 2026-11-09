@@ -11,7 +11,6 @@ import re
 import uuid
 from urllib.parse import urlsplit
 
-from device_monitor.config import AUTH_ENABLED
 from device_monitor.domain.errors import ValidationError
 from device_monitor.domain.models import Device, Site
 from device_monitor.probing.socks import ProxyError, parse_proxy
@@ -132,11 +131,6 @@ def clean_password(raw, current: str) -> str:
         return current
     if raw is False:
         return ""
-    if not AUTH_ENABLED:
-        raise ValidationError(
-            "Пароли устройств нельзя хранить, пока панель без входа. "
-            "Задайте DM_PASSWORD и перезапустите сервис."
-        )
     return obfuscate(str(raw)[:200])
 
 

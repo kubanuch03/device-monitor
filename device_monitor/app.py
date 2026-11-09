@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import secrets
 from pathlib import Path
 
 from device_monitor import config
@@ -19,16 +21,26 @@ class App:
         self._ensure_default_user()
 
     def _ensure_default_user(self) -> None:
-        """При первом запуске создаёт дефолтную учётку из config.
+        """При первом запуске создаёт учётку входа.
 
-        Пароль сразу хешируется и в открытом виде нигде не оседает. Дефолт —
-        для первого входа; в публичном репозитории он не секрет, сменить через
-        интерфейс после входа (или задать своим через DM_DEFAULT_PASSWORD).
+        Пароль берётся из DM_DEFAULT_PASSWORD, а без него генерируется
+        случайный. Сгенерированный пароль надо как-то показать человеку, который
+        только что поставил сервис, - он кладётся в data/first-login.txt (600),
+        а в лог пишется только путь к файлу. Файл удаляется при первой смене пароля
+        через «Аккаунт».
         """
-        if self.storage.get_user() is None:
-            self.storage.set_user(
-                config.DEFAULT_USERNAME, hash_password(config.DEFAULT_PASSWORD)
-            )
+        if self.storage.get_user() is not None:
+            return
+        password = config.DEFAULT_PASSWORD
+        if not password:
+            password = secrets.token_urlsafe(9)
+            write_private(config.FIRST_LOGIN_FILE,
+                          f"логин: {config.DEFAULT_USERNAME}\nпароль: {password}\n"
+                          "Смените пароль в «Аккаунт» - этот файл тогда удалится.\n")
+            # В лог - только путь: docker logs и journald читает вся группа
+            # docker и хранят их долго, а у файла права 600.
+            print(f"[auth] первый вход: логин и пароль в {config.FIRST_LOGIN_FILE}", flush=True)
+        self.storage.set_user(config.DEFAULT_USERNAME, hash_password(password))
 
     def start(self) -> None:
         if config.MONITOR_ENABLED:
@@ -36,6 +48,18 @@ class App:
 
     def stop(self) -> None:
         self.monitor.stop()
+
+
+def write_private(path: Path, text: str) -> None:
+    """Пишет файл, который с момента создания читается только владельцем."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Старый файл удаляется, а не перезаписывается: у оставшегося от прошлой
+    # установки могли быть права 644 (O_TRUNC их сохранил бы) или он мог
+    # оказаться симлинком. O_EXCL|O_NOFOLLOW создаёт строго новый файл.
+    path.unlink(missing_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 def migrate_json(storage, path: Path) -> int:

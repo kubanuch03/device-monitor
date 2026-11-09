@@ -24,11 +24,12 @@ Device Monitor и все туннели крутятся на **одной** м�
 ```bash
 git clone <этот репозиторий> device-monitor && cd device-monitor
 cp data/devices.example.json data/devices.json   # или пустой старт
-echo "DM_PASSWORD=<сгенерируйте>" > .env
 docker compose up -d
+cat data/first-login.txt   # логин и пароль первого входа
 ```
 
-Панель — http://127.0.0.1:8890.
+Панель — http://127.0.0.1:8890. Смените пароль в «Аккаунт», и файл
+`data/first-login.txt` удалится.
 
 ## 2. Туннель до объекта без прямого маршрута
 

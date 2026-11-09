@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from urllib.request import urlopen
 
-from device_monitor.config import AUTH_ENABLED, HISTORY_DAYS, POLL_INTERVAL
+from device_monitor.config import HISTORY_DAYS, POLL_INTERVAL
 from device_monitor.domain.errors import ValidationError
 from device_monitor.domain import transfer
 from device_monitor.domain.credentials import effective
@@ -112,16 +112,6 @@ def device_secret(app, device_id: str) -> tuple[int, dict]:
     должен доставаться только по явному запросу залогиненного пользователя.
     Доступ уже отфильтрован авторизацией на уровне транспорта.
     """
-    # Хранить учётки без пароля на панель запрещает clean_device(), но этого
-    # мало: пароль можно завести с включённым входом, а потом перезапустить
-    # сервис без DM_PASSWORD - и тогда _authed() пропускает всех, а секреты
-    # остаются в базе. Значит проверять надо не «как сохранили», а «как отдаём
-    # сейчас»: без входа секреты не выдаём никому.
-    if not AUTH_ENABLED:
-        return HTTPStatus.FORBIDDEN, {
-            "detail": "Панель работает без входа — учётные данные устройств не выдаются. "
-                      "Задайте DM_PASSWORD и перезапустите сервис."
-        }
     device = app.storage.device(device_id)
     if device is None:
         return HTTPStatus.NOT_FOUND, {"detail": "Устройство не найдено"}
@@ -193,11 +183,6 @@ def delete_category(app, site: str, name: str) -> tuple[int, dict]:
 
 
 def export_data(app, include_secrets: bool) -> tuple[int, dict]:
-    # Пароли в выгрузке - то же, что выдача секрета: без входа их не отдаём.
-    if include_secrets and not AUTH_ENABLED:
-        return HTTPStatus.FORBIDDEN, {
-            "detail": "Выгрузка паролей доступна только со входом. Задайте DM_PASSWORD."
-        }
     return HTTPStatus.OK, transfer.export_data(app.storage, include_secrets)
 
 

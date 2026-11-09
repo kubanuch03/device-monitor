@@ -34,14 +34,20 @@ HISTORY_DAYS = max(1, int(os.environ.get("DM_HISTORY_DAYS", "90")))
 MONITOR_ENABLED = os.environ.get("DM_DISABLE_MONITOR", "") != "1"
 
 # Учётная запись входа хранится в БД (хешем). При первом запуске, когда
-# пользователей ещё нет, создаётся дефолтная — логин/пароль ниже. Их МОЖНО и
-# НУЖНО переопределить через env (особенно пароль: репозиторий публичный, и
-# зашитый дефолт секретом не является — сменить после первого входа).
+# пользователей ещё нет, создаётся учётка с логином ниже. Пароль - из env, а
+# если он не задан, генерируется случайный (см. App._ensure_default_user).
+# Зашитого в код пароля нет намеренно: репозиторий публичный, и любой
+# дефолт из исходников - это общеизвестный пароль ко всем установкам.
 DEFAULT_USERNAME = os.environ.get("DM_DEFAULT_USERNAME", "admin").strip() or "admin"
-DEFAULT_PASSWORD = os.environ.get("DM_DEFAULT_PASSWORD", "S347367j")
+DEFAULT_PASSWORD = os.environ.get("DM_DEFAULT_PASSWORD", "")
+FIRST_LOGIN_FILE = DATA_DIR / "first-login.txt"
+
+# Перебор пароля входа: столько неудач с одного адреса за окно - и вход
+# с него закрыт до конца окна.
+LOGIN_FAIL_LIMIT = max(1, int(os.environ.get("DM_LOGIN_FAIL_LIMIT", "5")))
+LOGIN_FAIL_WINDOW = max(10, int(os.environ.get("DM_LOGIN_FAIL_WINDOW", "60")))
 
 # Вход в панель обязателен всегда — она хранит доступы к оборудованию.
-AUTH_ENABLED = True
 SESSION_COOKIE = "dm_session"
 SESSION_TTL = max(300, int(os.environ.get("DM_SESSION_TTL", str(12 * 3600))))
 
