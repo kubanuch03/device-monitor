@@ -1,0 +1,40 @@
+# Постоянный проброс локальных портов до камер Кызыл-Кии через WireGuard kk.
+#
+# Аналог device-forward-balykchy.service, но без SSH: kk изолирован (см.
+# deploy/vpn/README.md, install-isolated.sh), его маршруты видит только
+# пользователь dm-kk. Поэтому socat запускается от dm-kk - тогда соединения к
+# 192.168.158.x уходят в kk, а не в wg0, где за теми же адресами чужая сеть.
+#
+# 127.0.0.1:181NN открывает камеру 192.168.158.NN на порту 80. Эти адреса
+# прописаны в поле open_url у устройств точки «Кызыл-Кия» в панели.
+#
+# Установка (нужен root):
+#   sudo apt install socat
+#   sudo cp deploy/device-forward-kk.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now device-forward-kk
+#
+# Адреса вшиты, как и у Балыкчы. Новая камера - строка fwd ниже.
+
+[Unit]
+Description=Device Monitor: прямой проброс портов до камер Кызыл-Кии (kk)
+After=wg-quick@kk.service device-socks-kk.service
+Wants=wg-quick@kk.service device-socks-kk.service
+
+[Service]
+User=dm-kk
+# Один юнит на все камеры: если упадёт любой socat, wait -n завершит оболочку,
+# и systemd перезапустит проброс целиком.
+ExecStart=/bin/bash -c '\
+  fwd() { /usr/bin/socat TCP-LISTEN:$$1,bind=127.0.0.1,fork,reuseaddr TCP:$$2,connect-timeout=10 & }; \
+  fwd 18105 192.168.158.5:80; \
+  fwd 18106 192.168.158.6:80; \
+  fwd 18117 192.168.158.17:80; \
+  fwd 18118 192.168.158.18:80; \
+  fwd 18128 192.168.158.28:80; \
+  wait -n'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
