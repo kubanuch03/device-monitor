@@ -392,11 +392,14 @@ function deviceCard(device) {
   // адреса проверки (обычно так у устройств за туннелем: проверяем по
   // настоящему IP в сети объекта, а входим через локальный проброшенный
   // порт, до которого доходит обычный браузер).
+  // Куда реально ведёт «Открыть»: адрес, вписанный руками, или порт
+  // встроенного релея для устройства за туннелем точки.
+  const accessUrl = device.open_url || device.relay_url;
   let openHost = null;
-  if (device.open_url && device.open_url !== device.url) {
+  if (accessUrl && accessUrl !== device.url) {
     openHost = document.createElement("div");
     openHost.className = "card-host card-host-open";
-    openHost.textContent = `вход: ${device.open_url}`;
+    openHost.textContent = `вход: ${accessUrl}`;
     openHost.title = "Локальный адрес для входа — настоящий IP снаружи туннеля недоступен";
   }
 
@@ -440,9 +443,11 @@ function deviceCard(device) {
   // никому. Там остаётся буфер обмена - одна вставка вместо набора пароля.
   const autoLogin = device.has_password && AUTOLOGIN_SCHEMES.includes(webAuthOf(device));
 
-  if (device.open_url) {
-    open.onclick = () => openDevice(device, device.open_url, autoLogin, open);
-    open.title = `Откроется через проброшенный порт: ${device.open_url}`;
+  if (accessUrl) {
+    open.onclick = () => openDevice(device, accessUrl, autoLogin, open);
+    open.title = device.open_url
+      ? `Откроется по заданному адресу: ${device.open_url}`
+      : `Откроется через туннель точки: ${accessUrl}`;
   } else if (siteProxy) {
     // Учётку через лаунчер не передаём намеренно: она ушла бы в аргументы
     // процесса и стала бы видна в `ps` любому пользователю машины. Здесь

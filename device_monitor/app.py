@@ -8,6 +8,7 @@ import secrets
 from pathlib import Path
 
 from device_monitor import config
+from device_monitor.access.relay import RelayManager
 from device_monitor.alerts.service import AlertService
 from device_monitor.domain.models import Device, Site
 from device_monitor.probing.monitor import Monitor
@@ -19,7 +20,8 @@ class App:
     def __init__(self, storage=None):
         self.storage = storage or SqlAlchemyStorage(config.DB_PATH)
         self.alerts = AlertService(self.storage, run_sender=config.MONITOR_ENABLED)
-        self.monitor = Monitor(self.storage, self.alerts)
+        self.relay = RelayManager(self.storage)
+        self.monitor = Monitor(self.storage, self.alerts, self.relay)
         self._ensure_default_user()
 
     def _ensure_default_user(self) -> None:
@@ -47,11 +49,13 @@ class App:
     def start(self) -> None:
         if config.MONITOR_ENABLED:
             self.alerts.start()
+            self.relay.start()
             self.monitor.start()
 
     def stop(self) -> None:
         self.monitor.stop()
         self.alerts.stop()
+        self.relay.stop()
 
 
 def write_private(path: Path, text: str) -> None:

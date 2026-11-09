@@ -57,6 +57,9 @@ def state(app) -> tuple[int, dict]:
                 "checked_at": current.get("checked_at"),
                 "facts": facts.get(device.id, {}),
                 "muted_until": mutes.get(f"device:{device.id}"),
+                # Адрес встроенного релея для устройства за туннелем точки:
+                # его открывает кнопка «Открыть» (см. access/relay.py).
+                "relay_url": app.relay.url_for(device),
             }
         )
         devices.append(entry)

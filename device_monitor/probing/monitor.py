@@ -29,9 +29,10 @@ def now_iso() -> str:
 
 
 class Monitor:
-    def __init__(self, storage, alerts=None):
+    def __init__(self, storage, alerts=None, relay=None):
         self.storage = storage
         self.alerts = alerts
+        self.relay = relay
         self._lock = threading.Lock()
         self._state: dict[str, dict] = {}
         self._facts: dict[str, dict] = {}
@@ -91,6 +92,13 @@ class Monitor:
                 self.alerts.tick()
             except Exception as exc:
                 print(f"[alerts] сторож: {exc}", flush=True)
+        if self.relay is not None:
+            # Порты релея держим в соответствии с базой каждый круг: новое
+            # устройство за туннелем открывается без перезапуска сервиса.
+            try:
+                self.relay.sync(devices, proxies)
+            except Exception as exc:
+                print(f"[relay] синхронизация: {exc}", flush=True)
         if not devices:
             with self._lock:
                 self._state = {}
@@ -186,10 +194,8 @@ class Monitor:
 
     def _refresh_facts(self, devices: list[Device]) -> None:
         now = time.time()
-        # Сбор сведений идёт по HTTP через urllib, который SOCKS не умеет,
-        # поэтому проксированные точки пока пропускаем (доступность у них
-        # работает, а сведения от железа - следующий этап).
         proxied = {s.name for s in self.storage.sites() if s.proxy}
+        relay_ports = self.relay.ports() if self.relay is not None else {}
         with self._lock:
             forced = set(self._forced)
             self._forced.clear()
@@ -197,15 +203,23 @@ class Monitor:
                 d for d in devices
                 if d.id in forced or now - self._facts.get(d.id, {}).get("_at", 0) > INSPECT_TTL
             ]
-        # Вендорный опрос идёт по настоящему адресу устройства через urllib, а
-        # он SOCKS не умеет - для точек за туннелем его по-прежнему пропускаем.
-        # А вот схему авторизации спрашивать можно и там, где есть проброшенный
-        # порт: он локальный, и именно он откроется кнопкой.
+        # Опрос идёт по HTTP через urllib, который SOCKS не умеет. Устройство
+        # за туннелем спрашиваем через его порт встроенного релея: это обычный
+        # локальный адрес, и драйверы строят URL из host/web_port. Без релея
+        # (старые ручные пробросы) - только схему входа по open_url, как раньше.
         # Учётку разрешаем здесь, а не в _inspect: правило «своя или точки»
         # должно быть одно на весь сервис, и живёт оно в domain/credentials.py.
         sites = {s.name: s for s in self.storage.sites()}
-        jobs = [(d, d.site not in proxied, *effective(d, sites.get(d.site)))
-                for d in stale if d.site not in proxied or d.open_url]
+        jobs = []
+        for d in stale:
+            creds = effective(d, sites.get(d.site))
+            if d.site not in proxied:
+                jobs.append((d, True, *creds))
+            elif d.id in relay_ports:
+                local = d.with_fields(host="127.0.0.1", web_port=relay_ports[d.id], open_url="")
+                jobs.append((local, True, *creds))
+            elif d.open_url:
+                jobs.append((d, False, *creds))
         if not jobs:
             return
 
