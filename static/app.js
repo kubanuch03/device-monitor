@@ -526,6 +526,14 @@ function deviceCard(device) {
   // себе (модель, серийник, прошивка, MAC, отпечаток). Заполняется из facts —
   // вендор и модель Hikvision видны без пароля, остальное приходит по учётке.
   const facts = device.facts || {};
+  // Проблемы здоровья (часы, NTP) - строкой на самой карточке, а не только в
+  // свёрнутом «Доп. инфо»: иначе их никто не увидит.
+  if (facts.health) {
+    const warn = document.createElement("div");
+    warn.className = "card-health";
+    warn.textContent = `⚠ ${facts.health}`;
+    meta.after(warn);
+  }
   const rows = FACT_ORDER.filter((k) => facts[k] && k !== "detail" && k !== "checked_at");
   const extra = document.createElement("details");
   extra.className = "more";
@@ -1523,6 +1531,9 @@ const FACT_LABELS = {
   hardware: "Аппаратная версия",
   mac: "MAC-адрес",
   device_name: "Имя в устройстве",
+  health: "Требует внимания",
+  clock: "Часы",
+  ntp: "Синхронизация времени",
   fingerprint: "Отпечаток (не меняется при смене IP)",
   web_auth: "Как спрашивает пароль",
   detail: "Примечание",
@@ -1541,8 +1552,8 @@ const FACT_VALUES = {
 function factText(key, value) {
   return (FACT_VALUES[key] && FACT_VALUES[key][value]) || value;
 }
-const FACT_ORDER = ["vendor", "model", "serial", "firmware", "released", "hardware", "mac",
-                    "device_name", "fingerprint", "web_auth", "detail"];
+const FACT_ORDER = ["health", "vendor", "model", "serial", "firmware", "released", "hardware",
+                    "mac", "clock", "ntp", "device_name", "fingerprint", "web_auth", "detail"];
 
 function row(label, value) {
   const dt = document.createElement("dt");
