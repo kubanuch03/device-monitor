@@ -43,3 +43,13 @@ def _fresh_security_state():
     THROTTLE._fails.clear()
     SESSIONS._tokens.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_telegram_network(monkeypatch):
+    """Тесты не ходят в настоящий Telegram: подменяйте send_message сами."""
+    from device_monitor.alerts import telegram
+
+    def offline(*_a, **_kw):
+        raise telegram.TelegramError("сеть Telegram в тестах отключена")
+    monkeypatch.setattr(telegram, "_call", offline)

@@ -20,7 +20,9 @@ from device_monitor.app import App, migrate_json
 from device_monitor.domain.errors import ConflictError, ValidationError
 from device_monitor.security import SESSIONS, THROTTLE, hash_password, verify_password
 from device_monitor.web import api
-from device_monitor.web.schemas import AccountIn, CategoryIn, DeviceIn, LoginIn, SiteIn
+from device_monitor.web.schemas import (
+    AccountIn, AlertSettingsIn, CategoryIn, DeviceIn, LoginIn, MuteIn, SiteIn,
+)
 
 APP_STATE: dict = {}
 
@@ -179,6 +181,31 @@ def state():
 @app.get("/api/v1/sites/{name}/streams", dependencies=[Depends(require_auth)])
 def site_streams(name: str):
     return _unwrap(api.stream_names(core(), name))
+
+
+@app.get("/api/v1/alerts", dependencies=[Depends(require_auth)])
+def alert_settings():
+    return _unwrap(api.alert_settings(core()))
+
+
+@app.put("/api/v1/alerts", dependencies=[Depends(require_auth)])
+def update_alert_settings(body: AlertSettingsIn):
+    return _unwrap(api.update_alert_settings(core(), body.model_dump(exclude_none=True)))
+
+
+@app.post("/api/v1/alerts/test", dependencies=[Depends(require_auth)])
+def alert_test():
+    return _unwrap(api.alert_test(core()))
+
+
+@app.post("/api/v1/alerts/chats", dependencies=[Depends(require_auth)])
+def alert_chats():
+    return _unwrap(api.alert_chats(core()))
+
+
+@app.post("/api/v1/mutes", dependencies=[Depends(require_auth)])
+def set_mute(body: MuteIn):
+    return _unwrap(api.set_mute(core(), body.model_dump()))
 
 
 @app.get("/api/v1/health")

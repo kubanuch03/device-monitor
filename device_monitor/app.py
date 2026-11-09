@@ -8,6 +8,7 @@ import secrets
 from pathlib import Path
 
 from device_monitor import config
+from device_monitor.alerts.service import AlertService
 from device_monitor.domain.models import Device, Site
 from device_monitor.probing.monitor import Monitor
 from device_monitor.security import hash_password
@@ -17,7 +18,8 @@ from device_monitor.storage.sqlalchemy_store import SqlAlchemyStorage
 class App:
     def __init__(self, storage=None):
         self.storage = storage or SqlAlchemyStorage(config.DB_PATH)
-        self.monitor = Monitor(self.storage)
+        self.alerts = AlertService(self.storage, run_sender=config.MONITOR_ENABLED)
+        self.monitor = Monitor(self.storage, self.alerts)
         self._ensure_default_user()
 
     def _ensure_default_user(self) -> None:
@@ -44,10 +46,12 @@ class App:
 
     def start(self) -> None:
         if config.MONITOR_ENABLED:
+            self.alerts.start()
             self.monitor.start()
 
     def stop(self) -> None:
         self.monitor.stop()
+        self.alerts.stop()
 
 
 def write_private(path: Path, text: str) -> None:

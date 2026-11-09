@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -85,6 +86,15 @@ class UserRow(Base):
     password_hash: Mapped[str] = mapped_column(Text)
 
 
+class SettingRow(Base):
+    """Настройки сервиса, которые меняются из интерфейса (оповещения, окна
+    обслуживания). Значение - JSON: набор полей у настроек разный, а заводить
+    колонку под каждое ради десятка записей - лишняя миграция на каждую фичу."""
+    __tablename__ = "settings"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="{}")
+
+
 Index("idx_events_device_at", StatusEventRow.device_id, StatusEventRow.at)
 
 
@@ -160,7 +170,6 @@ class SqlAlchemyStorage:
 
     @staticmethod
     def _to_device(row: DeviceRow) -> Device:
-        import json
         return Device(
             id=row.id, site=row.site, category=row.category, name=row.name,
             host=row.host, ports=tuple(json.loads(row.ports)), scheme=row.scheme,
@@ -318,7 +327,6 @@ class SqlAlchemyStorage:
             s.add(CategoryRow(site=device.site, name=device.category, note=""))
 
     def add_device(self, device: Device) -> Device:
-        import json
         from device_monitor.config import MAX_DEVICES
         with self._lock, Session(self._engine) as s:
             count = s.scalar(select(func.count()).select_from(DeviceRow))
@@ -336,7 +344,6 @@ class SqlAlchemyStorage:
         return device
 
     def update_device(self, device: Device) -> Device:
-        import json
         with self._lock, Session(self._engine) as s:
             row = s.get(DeviceRow, device.id)
             if row is None:
@@ -436,6 +443,24 @@ class SqlAlchemyStorage:
         with self._lock, Session(self._engine) as s:
             s.execute(delete(UserRow))
             s.add(UserRow(username=username, password_hash=password_hash))
+            s.commit()
+
+    # -- настройки ---------------------------------------------------------------
+
+    def get_setting(self, key: str) -> dict:
+        with self._lock, Session(self._engine) as s:
+            row = s.get(SettingRow, key)
+            if row is None:
+                return {}
+            try:
+                value = json.loads(row.value or "{}")
+            except ValueError:
+                return {}
+            return value if isinstance(value, dict) else {}
+
+    def set_setting(self, key: str, value: dict) -> None:
+        with self._lock, Session(self._engine) as s:
+            s.merge(SettingRow(key=key, value=json.dumps(value, ensure_ascii=False)))
             s.commit()
 
     def prune_history(self, days: int) -> int:

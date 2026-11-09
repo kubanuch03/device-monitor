@@ -28,6 +28,7 @@
       <button type="button" id="export-secrets" title="Экспорт с паролями устройств в открытом виде - файл считать секретом">С паролями</button>
       <button type="button" id="import" title="Загрузить файл экспорта">Импорт</button>
       <input type="file" id="import-file" accept="application/json,.json" hidden>
+      <button type="button" id="alerts" title="Оповещения о падениях в Telegram">Оповещения</button>
       <button type="button" id="account" title="Учётная запись">Аккаунт</button>
       <button type="button" id="logout" title="Выйти">Выйти</button>
     </div>
@@ -219,6 +220,77 @@
     <span class="spacer"></span>
     <button type="button" id="detail-close">Закрыть</button>
   </div>
+</dialog>
+
+<dialog id="alerts-editor">
+  <form method="dialog" id="alerts-form">
+    <h2>Оповещения в Telegram</h2>
+    <ol class="hint steps">
+      <li>Создайте бота у <code>@BotFather</code> (команда <code>/newbot</code>) и скопируйте токен.</li>
+      <li>Добавьте бота в группу и сделайте его <b>администратором</b> — иначе он не видит сообщений группы.</li>
+      <li>Напишите в группе <code>/start</code>, затем нажмите «Найти группу».</li>
+    </ol>
+
+    <div class="field">
+      <label for="al-token">Токен бота</label>
+      <div class="pw-wrap">
+        <input id="al-token" name="telegram_token" type="password" autocomplete="off" spellcheck="false">
+      </div>
+      <p class="hint" id="al-token-hint">Выдаёт @BotFather, вида 123456789:AA…</p>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="al-chat">Группа (ID чата)</label>
+        <input id="al-chat" name="chat_id" placeholder="-1001234567890" autocomplete="off" spellcheck="false">
+        <p class="hint" id="al-chat-hint">Ссылка-приглашение не подойдёт — нужен числовой ID, его найдёт кнопка.</p>
+      </div>
+      <div class="field narrow">
+        <label>&nbsp;</label>
+        <button type="button" id="al-find">Найти группу</button>
+      </div>
+    </div>
+    <div class="field" id="al-chats-field" hidden>
+      <label for="al-chats">Чаты, где бот видел сообщения</label>
+      <select id="al-chats"></select>
+    </div>
+
+    <div class="row">
+      <div class="field narrow">
+        <label for="al-confirm">Подтверждение, кругов</label>
+        <input id="al-confirm" name="down_confirm" type="number" min="1" max="20" inputmode="numeric">
+      </div>
+      <div class="field narrow">
+        <label for="al-repeat">Повтор, часов</label>
+        <input id="al-repeat" name="repeat_hours" type="number" min="0" max="168" step="0.5" inputmode="decimal">
+      </div>
+    </div>
+    <p class="hint" id="al-rules-hint"></p>
+
+    <div class="field">
+      <label for="al-heartbeat">Сторож самого монитора (необязательно)</label>
+      <input id="al-heartbeat" name="heartbeat_url" placeholder="https://hc-ping.com/…" autocomplete="off" spellcheck="false">
+      <p class="hint">Адрес, который монитор дёргает каждый круг (Healthchecks.io и аналоги). Если монитор
+         сам упадёт, тревогу пришлёт этот сервис.</p>
+    </div>
+
+    <div class="field check">
+      <label class="check-line">
+        <input type="checkbox" id="al-enabled" name="enabled">
+        <span>Оповещения включены</span>
+      </label>
+    </div>
+
+    <p class="hint" id="al-status"></p>
+    <p class="form-error" id="alerts-error" hidden></p>
+
+    <div class="editor-actions">
+      <button type="button" id="al-test">Тестовое сообщение</button>
+      <span class="spacer"></span>
+      <button type="button" id="alerts-cancel">Закрыть</button>
+      <button type="submit" class="primary">Сохранить</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="account-editor">

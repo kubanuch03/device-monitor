@@ -51,5 +51,12 @@ LOGIN_FAIL_WINDOW = max(10, int(os.environ.get("DM_LOGIN_FAIL_WINDOW", "60")))
 SESSION_COOKIE = "dm_session"
 SESSION_TTL = max(300, int(os.environ.get("DM_SESSION_TTL", str(12 * 3600))))
 
+# Оповещения. Основная настройка - в интерфейсе («Оповещения»), env - запасной
+# путь для установки без интерфейса (токен бота и id чата Telegram).
+TG_TOKEN = os.environ.get("DM_TG_TOKEN", "").strip()
+TG_CHAT = os.environ.get("DM_TG_CHAT", "").strip()
+# Часовой пояс времени в сообщениях: события камер на объектах в Кыргызстане.
+TIMEZONE = os.environ.get("DM_TZ", "Asia/Bishkek").strip() or "Asia/Bishkek"
+
 MAX_BODY_BYTES = 256 * 1024
 MAX_DEVICES = 2000

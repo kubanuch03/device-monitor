@@ -197,8 +197,68 @@ async function api(path, options) {
   });
   let body = null;
   try { body = await response.json(); } catch (e) { /* пустой ответ - нормально */ }
+  // Сессии живут в памяти сервиса: после его перезапуска вход слетает, и любой
+  // запрос отвечает 401. Раньше ошибка тихо уходила в баннер под открытым
+  // диалогом (например, «глаз» пароля просто ничего не делал). Теперь - на вход.
+  if (response.status === 401 && !path.startsWith("/api/v1/login")) {
+    window.location.href = "/";
+    throw new Error("Сессия истекла - нужен вход");
+  }
   if (!response.ok) throw new Error((body && body.detail) || `Ошибка ${response.status}`);
   return body;
+}
+
+// «Не тревожить»: выпадающий список рядом с устройством или точкой. Пункт
+// «до утра» - до 09:00 следующего утра по часам браузера.
+const MUTE_CHOICES = [
+  ["", "🔔 Тревоги включены"],
+  ["60", "🔕 Не тревожить 1 ч"],
+  ["240", "🔕 Не тревожить 4 ч"],
+  ["morning", "🔕 До утра (09:00)"],
+  ["1440", "🔕 Не тревожить сутки"],
+];
+
+function minutesUntilMorning() {
+  const now = new Date();
+  const end = new Date(now);
+  end.setHours(9, 0, 0, 0);
+  if (end <= now) end.setDate(end.getDate() + 1);
+  return Math.ceil((end - now) / 60000);
+}
+
+function muteControl(kind, target, mutedUntil) {
+  const select = document.createElement("select");
+  select.className = "mute-select";
+  MUTE_CHOICES.forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.append(option);
+  });
+  if (mutedUntil) {
+    const until = new Date(mutedUntil);
+    const option = document.createElement("option");
+    option.value = "keep";
+    option.textContent = `🔕 Тихо до ${until.toLocaleString("ru-RU",
+      { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
+    select.prepend(option);
+    select.value = "keep";
+    select.classList.add("muted");
+  }
+  select.title = "Окно обслуживания: тревоги в Telegram по этому объекту не приходят";
+  select.onclick = (event) => event.stopPropagation();
+  select.onchange = async () => {
+    const value = select.value;
+    if (value === "keep") return;
+    const minutes = value === "morning" ? minutesUntilMorning() : Number(value || 0);
+    try {
+      await api("/api/v1/mutes", { method: "POST", body: JSON.stringify({ kind, target, minutes }) });
+      await refresh();
+    } catch (error) {
+      showAlert(error.message);
+    }
+  };
+  return select;
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +508,7 @@ function deviceCard(device) {
     }
   };
 
-  actions.append(open, info, edit, copy, remove);
+  actions.append(open, info, edit, copy, remove, muteControl("device", device.id, device.muted_until));
   card.append(head, host);
   if (openHost) card.append(openHost);
   card.append(ports, meta);
@@ -707,7 +767,10 @@ function renderCategoriesScreen(site) {
   // Мозаика всех камер точки — отдельной вкладкой. Показываем кнопку только
   // если у точки задан go2rtc и есть хоть одна камера с именем потока.
   const withStream = all.filter((d) => d.stream_name).length;
-  let actions = settings;
+  const mute = muteControl("site", site, meta.muted_until);
+  let actions = document.createElement("div");
+  actions.className = "head-actions";
+  actions.append(mute, settings);
   if (meta.stream_base && withStream) {
     const watchAll = document.createElement("button");
     watchAll.type = "button";
@@ -717,9 +780,7 @@ function renderCategoriesScreen(site) {
       `/static/streams.html?site=${encodeURIComponent(site)}`, "_blank", "noopener");
     // Обе кнопки одним узлом: screenHead принимает ровно один элемент-действие,
     // а вставить рядом нельзя — он ещё не в документе.
-    actions = document.createElement("div");
-    actions.className = "head-actions";
-    actions.append(watchAll, settings);
+    actions.prepend(watchAll);
   }
   els.view.append(
     crumb("← Все точки", () => goTo(null)),
@@ -921,6 +982,7 @@ function render() {
 async function refresh() {
   try {
     state = await api("/api/v1/state");
+    markAlertsButton();
     showAlert("");
     render();
     schedule();
@@ -1428,6 +1490,166 @@ importFile.onchange = async () => {
     showAlert(error.message);
   }
 };
+
+// ---------------------------------------------------------------------------
+// оповещения
+// ---------------------------------------------------------------------------
+
+const alertsEditor = document.getElementById("alerts-editor");
+const alertsForm = document.getElementById("alerts-form");
+const alertsError = document.getElementById("alerts-error");
+const alertsStatus = document.getElementById("al-status");
+
+function alertsFail(error) {
+  alertsError.textContent = error.message;
+  alertsError.hidden = false;
+}
+
+function fillAlerts(s) {
+  alertsForm.telegram_token.value = "";
+  alertsForm.telegram_token.placeholder = s.has_token
+    ? (s.token_from_env ? "задан в окружении (DM_TG_TOKEN)" : "сохранён — пусто = не менять")
+    : "";
+  document.getElementById("al-token-hint").textContent = s.bot
+    ? `Бот: ${s.bot}` : "Выдаёт @BotFather, вида 123456789:AA…";
+  alertsForm.chat_id.value = s.chat_id || "";
+  alertsForm.chat_id.dataset.title = s.chat_title || "";
+  document.getElementById("al-chat-hint").textContent = s.chat_title
+    ? `Группа: ${s.chat_title}` : "Ссылка-приглашение не подойдёт — нужен числовой ID, его найдёт кнопка.";
+  alertsForm.down_confirm.value = s.down_confirm;
+  alertsForm.repeat_hours.value = s.repeat_hours;
+  alertsForm.heartbeat_url.value = s.heartbeat_url || "";
+  alertsForm.enabled.checked = s.enabled;
+  const wait = s.down_confirm * s.poll_interval;
+  document.getElementById("al-rules-hint").textContent =
+    `Тревога — после ${s.down_confirm} проверок подряд без ответа (≈${Math.round(wait / 60 * 10) / 10} мин). `
+    + "Если лёг туннель объекта или не отвечает большая часть его устройств — одно сообщение про объект. "
+    + "Повтор 0 — не повторять.";
+  const when = (iso) => new Date(iso).toLocaleString("ru-RU");
+  const parts = [];
+  if (s.last_error) parts.push(`Telegram: ошибка — ${s.last_error}`);
+  else if (s.last_ok) parts.push(`Telegram: последняя отправка ${when(s.last_ok)}`);
+  if (s.heartbeat_url) {
+    if (s.heartbeat_error) parts.push(`Сторож: ошибка — ${s.heartbeat_error}`);
+    else if (s.heartbeat_ok) parts.push(`Сторож: последний пинг ${when(s.heartbeat_ok)}`);
+  }
+  alertsStatus.textContent = parts.join(" · ");
+}
+
+async function loadAlerts() {
+  fillAlerts(await api("/api/v1/alerts"));
+}
+
+// Без настроенных оповещений кнопка подсвечивается: о падениях сейчас никто
+// не узнает, пока не откроет панель.
+function markAlertsButton() {
+  const button = document.getElementById("alerts");
+  const ok = state.alerts_configured;
+  button.classList.toggle("warn", !ok);
+  button.textContent = ok ? "Оповещения" : "Оповещения ⚠";
+  button.title = ok ? "Оповещения о падениях в Telegram"
+    : "Оповещения не настроены — о падениях никто не узнает";
+}
+
+document.getElementById("alerts").onclick = async () => {
+  alertsError.hidden = true;
+  document.getElementById("al-chats-field").hidden = true;
+  try {
+    await loadAlerts();
+  } catch (error) {
+    alertsFail(error);
+  }
+  alertsEditor.showModal();
+};
+
+document.getElementById("alerts-cancel").onclick = () => alertsEditor.close();
+
+function alertsPayload() {
+  const payload = {
+    chat_id: alertsForm.chat_id.value.trim(),
+    chat_title: alertsForm.chat_id.dataset.title || "",
+    down_confirm: Number(alertsForm.down_confirm.value || 3),
+    repeat_hours: Number(alertsForm.repeat_hours.value || 0),
+    heartbeat_url: alertsForm.heartbeat_url.value.trim(),
+    enabled: alertsForm.enabled.checked,
+  };
+  const token = alertsForm.telegram_token.value.trim();
+  if (token) payload.telegram_token = token;
+  return payload;
+}
+
+async function saveAlerts() {
+  const saved = await api("/api/v1/alerts", { method: "PUT", body: JSON.stringify(alertsPayload()) });
+  fillAlerts(saved);
+  return saved;
+}
+
+alertsForm.chat_id.addEventListener("input", () => { alertsForm.chat_id.dataset.title = ""; });
+
+document.getElementById("al-find").onclick = async (event) => {
+  const button = event.currentTarget;
+  alertsError.hidden = true;
+  button.disabled = true;
+  try {
+    // Токен мог быть только что вписан - сначала сохраняем его.
+    if (alertsForm.telegram_token.value.trim()) await saveAlerts();
+    const { chats } = await api("/api/v1/alerts/chats", { method: "POST" });
+    const select = document.getElementById("al-chats");
+    select.textContent = "";
+    if (!chats.length) {
+      throw new Error("Бот пока не видел сообщений. Добавьте его в группу администратором, "
+        + "напишите там /start и нажмите ещё раз.");
+    }
+    chats.forEach((chat) => {
+      const option = document.createElement("option");
+      option.value = chat.id;
+      option.textContent = `${chat.title} (${chat.type}, ${chat.id})`;
+      option.dataset.title = chat.title;
+      select.append(option);
+    });
+    const pick = () => {
+      const option = select.selectedOptions[0];
+      alertsForm.chat_id.value = option.value;
+      alertsForm.chat_id.dataset.title = option.dataset.title;
+    };
+    select.onchange = pick;
+    const group = chats.find((c) => c.type === "group" || c.type === "supergroup");
+    if (group) select.value = group.id;
+    pick();
+    document.getElementById("al-chats-field").hidden = false;
+  } catch (error) {
+    alertsFail(error);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+document.getElementById("al-test").onclick = async (event) => {
+  const button = event.currentTarget;
+  alertsError.hidden = true;
+  button.disabled = true;
+  try {
+    await saveAlerts();
+    await api("/api/v1/alerts/test", { method: "POST" });
+    alertsStatus.textContent = "Тестовое сообщение отправлено — проверьте группу.";
+  } catch (error) {
+    alertsFail(error);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+alertsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  alertsError.hidden = true;
+  try {
+    await saveAlerts();
+    alertsEditor.close();
+    await refresh();
+  } catch (error) {
+    alertsFail(error);
+  }
+});
 
 const accountEditor = document.getElementById("account-editor");
 const accountForm = document.getElementById("account-form");

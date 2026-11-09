@@ -329,8 +329,8 @@ dialog {
   box-shadow: var(--shadow);
 }
 dialog::backdrop { background: rgba(8, 14, 16, .55); }
-#editor-form { padding: 20px 22px 18px; display: flex; flex-direction: column; gap: 13px; }
-#editor-form h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+#editor-form, #alerts-form { padding: 20px 22px 18px; display: flex; flex-direction: column; gap: 13px; }
+#editor-form h2, #alerts-form h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
 
 .field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 auto; }
 .field.narrow { flex: 0 0 9.5rem; }
@@ -686,3 +686,17 @@ input::placeholder { color: var(--muted); opacity: .8; }
   font-weight: 500;
 }
 .check-line input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+
+/* Оповещения и окна обслуживания */
+button.warn { border-color: var(--down); color: var(--down); }
+.mute-select {
+  width: auto; max-width: 100%; font-size: 13px; padding: 5px 8px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+}
+.head-actions { align-items: center; margin-top: 10px; }
+.mute-select.muted { border-color: var(--unknown); color: var(--unknown); }
+.steps { padding-left: 18px; display: grid; gap: 4px; margin-bottom: 4px; }
+
+/* hidden должен скрывать и элементы с display:flex (.field, .row): без этого
+   правило класса перебивает атрибут, и «скрытое» поле видно. */
+[hidden] { display: none !important; }

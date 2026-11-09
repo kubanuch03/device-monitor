@@ -30,6 +30,7 @@ def state(app) -> tuple[int, dict]:
     tunnels = app.monitor.tunnels()
 
     known_sites = {s.name: s for s in app.storage.sites()}
+    mutes = app.alerts.mutes_public()
 
     devices = []
     for device in app.storage.devices():
@@ -50,6 +51,7 @@ def state(app) -> tuple[int, dict]:
                 "since": current.get("since"),
                 "checked_at": current.get("checked_at"),
                 "facts": facts.get(device.id, {}),
+                "muted_until": mutes.get(f"device:{device.id}"),
             }
         )
         devices.append(entry)
@@ -67,6 +69,7 @@ def state(app) -> tuple[int, dict]:
         row = {
             **s.public(),
             **summary([d for d in devices if d["site"] == s.name]),
+            "muted_until": mutes.get(f"site:{s.name}"),
         }
         if s.proxy:
             # Состояние туннеля отдаём отдельно от статусов устройств: когда он
@@ -92,7 +95,36 @@ def state(app) -> tuple[int, dict]:
         "updated_at": updated_at,
         "poll_interval": POLL_INTERVAL,
         "history_days": HISTORY_DAYS,
+        "alerts_configured": app.alerts.configured(),
     }
+
+
+# -- оповещения ---------------------------------------------------------------
+
+def alert_settings(app) -> tuple[int, dict]:
+    return HTTPStatus.OK, app.alerts.public_settings()
+
+
+def update_alert_settings(app, body: dict) -> tuple[int, dict]:
+    return HTTPStatus.OK, app.alerts.update_settings(body)
+
+
+def alert_test(app) -> tuple[int, dict]:
+    app.alerts.send_test()
+    return HTTPStatus.OK, {"ok": True}
+
+
+def alert_chats(app) -> tuple[int, dict]:
+    return HTTPStatus.OK, {"chats": app.alerts.find_chats()}
+
+
+def set_mute(app, body: dict) -> tuple[int, dict]:
+    kind, target = body.get("kind"), str(body.get("target") or "")
+    if kind == "device" and app.storage.device(target) is None:
+        return HTTPStatus.NOT_FOUND, {"detail": "Устройство не найдено"}
+    if kind == "site" and app.storage.site(target) is None:
+        return HTTPStatus.NOT_FOUND, {"detail": "Точка не найдена"}
+    return HTTPStatus.OK, {"mutes": app.alerts.set_mute(kind, target, body.get("minutes"))}
 
 
 def device_history(app, device_id: str) -> tuple[int, dict]:

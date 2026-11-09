@@ -14,8 +14,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from device_monitor.config import HISTORY_DAYS, INSPECT_TTL, MAX_WORKERS, POLL_INTERVAL
+from device_monitor.alerts.rules import Observation
 from device_monitor.domain.credentials import effective
-from device_monitor.domain.models import Device
+from device_monitor.domain.models import Device, ProbeResult
 from device_monitor.probing.socks import ProxyError
 from device_monitor.probing.tcp import probe
 from device_monitor.probing.webauth import probe_web_auth
@@ -28,8 +29,9 @@ def now_iso() -> str:
 
 
 class Monitor:
-    def __init__(self, storage):
+    def __init__(self, storage, alerts=None):
         self.storage = storage
+        self.alerts = alerts
         self._lock = threading.Lock()
         self._state: dict[str, dict] = {}
         self._facts: dict[str, dict] = {}
@@ -84,6 +86,11 @@ class Monitor:
             return
         devices = self.storage.devices()
         proxies = {s.name: s.proxy for s in self.storage.sites()}
+        if self.alerts is not None:
+            try:
+                self.alerts.tick()
+            except Exception as exc:
+                print(f"[alerts] сторож: {exc}", flush=True)
         if not devices:
             with self._lock:
                 self._state = {}
@@ -115,7 +122,6 @@ class Monitor:
                 # и туннель показывался живым просто потому, что одна проверка
                 # успела отработать раньше, чем другая уткнулась в мёртвый прокси.
                 tunnels[device.site] = {"status": "down", "detail": proxy_error}
-                from device_monitor.domain.models import ProbeResult
                 result = ProbeResult(status="down", ports={p: False for p in device.ports})
             elif proxies.get(device.site):
                 tunnels.setdefault(device.site, {"status": "up", "detail": None})
@@ -144,6 +150,21 @@ class Monitor:
             self._state = fresh
             self._tunnels = tunnels
             self._updated_at = checked_at
+
+        # Оповещения - ДО записи круга в историю: движок при первом взгляде
+        # на устройство берёт из истории его прежний статус, и после записи
+        # получил бы уже текущий - падение во время рестарта выглядело бы
+        # давно известным, и тревоги не было бы никогда.
+        if self.alerts is not None:
+            # Ошибка оповещений - повод для лога, а не для остановки опроса.
+            try:
+                self.alerts.process(
+                    [Observation(d.id, d.name, d.site, d.host, r.status)
+                     for d, r in zip(devices, results)],
+                    tunnels,
+                )
+            except Exception as exc:
+                print(f"[alerts] ошибка обработки: {exc}", flush=True)
 
         for device_id, status in transitions:
             # При первом круге после запуска состояние в памяти пустое, и всё

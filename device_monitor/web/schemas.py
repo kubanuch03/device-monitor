@@ -79,6 +79,25 @@ class DeviceIn(BaseModel):
     use_site_creds: bool | None = None
 
 
+class AlertSettingsIn(BaseModel):
+    """Всё необязательно: присланное поле меняется, остальное - как было.
+    telegram_token: строка - задать, False - убрать (как пароль устройства)."""
+    enabled: bool | None = None
+    telegram_token: str | bool | None = Field(default=None)
+    chat_id: str | None = Field(default=None, max_length=64)
+    chat_title: str | None = Field(default=None, max_length=120)
+    down_confirm: int | None = None
+    site_outage_ratio: float | None = None
+    repeat_hours: float | None = None
+    heartbeat_url: str | None = Field(default=None, max_length=300)
+
+
+class MuteIn(BaseModel):
+    kind: str = Field(pattern="^(site|device)$")
+    target: str = Field(min_length=1, max_length=120)
+    minutes: int | None = None   # None или 0 - снять окно
+
+
 class LoginIn(BaseModel):
     username: str = ""
     password: str = ""
