@@ -42,6 +42,7 @@
           <button type="button" id="export" title="Скачать точки, категории и устройства (без паролей)">Экспорт</button>
           <button type="button" id="export-secrets" title="Экспорт с паролями устройств в открытом виде - файл считать секретом">Экспорт с паролями</button>
           <button type="button" id="import" title="Загрузить файл экспорта">Импорт</button>
+          <button type="button" id="assistant" title="Подсказки имён при добавлении оборудования">ИИ-помощник</button>
           <button type="button" id="theme" title="Тема оформления">Тема: как в системе</button>
           <button type="button" id="account" title="Учётная запись">Аккаунт</button>
           <button type="button" id="logout" title="Выйти">Выйти</button>
@@ -314,6 +315,72 @@
       <button type="button" id="al-test">Тестовое сообщение</button>
       <span class="spacer"></span>
       <button type="button" id="alerts-cancel">Закрыть</button>
+      <button type="submit" class="primary">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="scan-dialog" class="wide">
+  <form method="dialog" id="scan-form">
+    <h2 id="scan-title">Найти оборудование</h2>
+    <p class="hint">Сервис проверит адреса подсети через VPN или туннель точки и опознает
+       камеры Dahua/Hikvision, коммутаторы, роутеры и серверы. Само ничего не добавится:
+       отметьте нужное галочкой.</p>
+    <div class="row">
+      <div class="field">
+        <label for="scan-subnet">Подсеть</label>
+        <input id="scan-subnet" name="subnet" placeholder="192.168.158.0/24" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field narrow">
+        <label>&nbsp;</label>
+        <button type="submit" class="primary" id="scan-start">Сканировать</button>
+      </div>
+    </div>
+    <progress id="scan-progress" max="1" value="0" hidden></progress>
+    <p class="hint" id="scan-status"></p>
+    <div id="scan-results"></div>
+    <p class="form-error" id="scan-error" hidden></p>
+    <div class="editor-actions">
+      <button type="button" id="scan-ai" hidden>Предложить имена (ИИ)</button>
+      <button type="button" id="scan-check-new" hidden>Отметить все новые</button>
+      <span class="spacer"></span>
+      <button type="button" id="scan-close">Закрыть</button>
+      <button type="button" class="primary" id="scan-add" hidden>Добавить отмеченные</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="assistant-editor">
+  <form method="dialog" id="assistant-form">
+    <h2>ИИ-помощник</h2>
+    <p class="hint">Предлагает понятные имена и категории найденному оборудованию. Подходит любой
+       OpenAI-совместимый API: локальная модель (vLLM, Ollama), OpenAI, Google Gemini
+       (<code>https://generativelanguage.googleapis.com/v1beta/openai</code>). Паролей в модель
+       не уходит — только адрес, порты и заголовки. Но с облачной моделью (OpenAI, Gemini)
+       эта карта внутренней сети объекта уходит провайдеру; локальная модель её никуда не отдаёт.</p>
+    <div class="field">
+      <label for="as-url">Адрес API</label>
+      <input id="as-url" name="base_url" placeholder="http://192.168.250.133:7700/v1" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="as-model">Модель</label>
+        <input id="as-model" name="model" placeholder="qwen3.6-35b-a3b-prod" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="as-key">Ключ API</label>
+        <input id="as-key" name="api_key" type="password" autocomplete="off">
+      </div>
+    </div>
+    <div class="field check">
+      <label class="check-line"><input type="checkbox" id="as-enabled" name="enabled"><span>Включён</span></label>
+    </div>
+    <p class="hint" id="as-status"></p>
+    <p class="form-error" id="assistant-error" hidden></p>
+    <div class="editor-actions">
+      <button type="button" id="as-test">Проверить</button>
+      <span class="spacer"></span>
+      <button type="button" id="assistant-cancel">Закрыть</button>
       <button type="submit" class="primary">Сохранить</button>
     </div>
   </form>

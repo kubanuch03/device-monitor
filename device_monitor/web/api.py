@@ -104,7 +104,46 @@ def state(app) -> tuple[int, dict]:
         "poll_interval": POLL_INTERVAL,
         "history_days": HISTORY_DAYS,
         "alerts_configured": app.alerts.configured(),
+        "assistant_configured": app.assistant.configured(),
     }
+
+
+# -- поиск оборудования и ИИ-помощник -------------------------------------------
+
+def scan_hint(app, site: str) -> tuple[int, dict]:
+    if app.storage.site(site) is None:
+        return HTTPStatus.NOT_FOUND, {"detail": "Точка не найдена"}
+    return HTTPStatus.OK, {"subnet": app.scans.subnet_for(site)}
+
+
+def start_scan(app, site: str, body: dict) -> tuple[int, dict]:
+    return HTTPStatus.OK, {"job": app.scans.start(site, str(body.get("subnet") or ""))}
+
+
+def scan_status(app, job_id: str) -> tuple[int, dict]:
+    job = app.scans.get(job_id)
+    if job is None:
+        return HTTPStatus.NOT_FOUND, {"detail": "Скан не найден (сервис перезапускался?)"}
+    return HTTPStatus.OK, {"job": job}
+
+
+def assistant_settings(app) -> tuple[int, dict]:
+    return HTTPStatus.OK, app.assistant.public()
+
+
+def update_assistant(app, body: dict) -> tuple[int, dict]:
+    return HTTPStatus.OK, app.assistant.update(body)
+
+
+def assistant_test(app) -> tuple[int, dict]:
+    return HTTPStatus.OK, app.assistant.test()
+
+
+def assistant_names(app, body: dict) -> tuple[int, dict]:
+    candidates = body.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return HTTPStatus.BAD_REQUEST, {"detail": "Нет устройств для подсказки"}
+    return HTTPStatus.OK, {"suggestions": app.assistant.suggest_names(candidates[:300])}
 
 
 # -- значок в трее ------------------------------------------------------------

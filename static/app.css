@@ -731,3 +731,18 @@ button.warn { border-color: var(--down); color: var(--down); }
 .onboarding { text-align: left; max-width: 34rem; margin: 18px auto 0; padding-left: 20px;
   display: grid; gap: 14px; line-height: 1.45; }
 .onboarding button { display: block; margin-top: 6px; }
+
+/* Поиск оборудования */
+dialog.wide { width: min(980px, calc(100vw - 32px)); }
+#scan-form, #assistant-form { padding: 20px 22px 18px; display: flex; flex-direction: column; gap: 13px; }
+#scan-form h2, #assistant-form h2 { margin: 0; font-size: 17px; }
+#scan-progress { width: 100%; }
+#scan-results { max-height: 55vh; overflow: auto; }
+.scan-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.scan-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 6px;
+  position: sticky; top: 0; background: var(--paper); }
+.scan-table td { padding: 3px 6px; border-top: 1px solid var(--line-soft); vertical-align: middle; }
+.scan-table input:not([type=checkbox]) { padding: 4px 6px; font-size: 13px; min-width: 9rem; }
+.scan-new { color: var(--up); font-weight: 600; }
+.scan-known { color: var(--muted); }
+.scan-missing { margin-top: 10px; }

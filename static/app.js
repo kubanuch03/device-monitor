@@ -777,9 +777,14 @@ function renderCategoriesScreen(site) {
   // если у точки задан go2rtc и есть хоть одна камера с именем потока.
   const withStream = all.filter((d) => d.stream_name).length;
   const mute = muteControl("site", site, meta.muted_until);
+  const find = document.createElement("button");
+  find.type = "button";
+  find.textContent = "Найти оборудование";
+  find.title = "Скан подсети точки: что отвечает и что это за устройство";
+  find.onclick = () => openScan(site);
   let actions = document.createElement("div");
   actions.className = "head-actions";
-  actions.append(mute, settings);
+  actions.append(mute, find, settings);
   if (meta.stream_base && withStream) {
     const watchAll = document.createElement("button");
     watchAll.type = "button";
@@ -1886,6 +1891,280 @@ alertsForm.addEventListener("submit", async (event) => {
     await refresh();
   } catch (error) {
     alertsFail(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// поиск оборудования (скан подсети точки)
+// ---------------------------------------------------------------------------
+
+const scanDialog = document.getElementById("scan-dialog");
+const scanForm = document.getElementById("scan-form");
+const scanEls = {
+  status: document.getElementById("scan-status"),
+  progress: document.getElementById("scan-progress"),
+  results: document.getElementById("scan-results"),
+  error: document.getElementById("scan-error"),
+  ai: document.getElementById("scan-ai"),
+  add: document.getElementById("scan-add"),
+  checkNew: document.getElementById("scan-check-new"),
+};
+let scanSite = null;
+let scanTimer = null;
+let scanRows = [];   // [{item, check, name, category}]
+// Какие из найденных портов проверять у нового устройства: веб и поток важнее.
+const MONITOR_PORT_ORDER = [80, 554, 37777, 443, 8000, 8080, 22, 10050, 23];
+
+function scanFail(error) {
+  scanEls.error.textContent = error.message;
+  scanEls.error.hidden = false;
+}
+
+async function openScan(site) {
+  scanSite = site;
+  clearInterval(scanTimer);
+  document.getElementById("scan-start").disabled = false;
+  document.getElementById("scan-title").textContent = `Найти оборудование — ${site}`;
+  scanEls.results.textContent = "";
+  scanEls.status.textContent = "";
+  scanEls.error.hidden = true;
+  scanEls.progress.hidden = true;
+  [scanEls.ai, scanEls.add, scanEls.checkNew].forEach((b) => { b.hidden = true; });
+  scanRows = [];
+  try {
+    const { subnet } = await api(`/api/v1/sites/${encodeURIComponent(site)}/scan`);
+    scanForm.subnet.value = subnet || "";
+  } catch (error) {
+    scanFail(error);
+  }
+  scanDialog.showModal();
+}
+
+scanForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  scanEls.error.hidden = true;
+  scanEls.results.textContent = "";
+  try {
+    const { job } = await api(`/api/v1/sites/${encodeURIComponent(scanSite)}/scan`, {
+      method: "POST", body: JSON.stringify({ subnet: scanForm.subnet.value }),
+    });
+    document.getElementById("scan-start").disabled = true;
+    scanEls.progress.hidden = false;
+    pollScan(job.id);
+  } catch (error) {
+    scanFail(error);
+  }
+});
+
+function pollScan(jobId) {
+  clearInterval(scanTimer);
+  const tick = async () => {
+    let job;
+    try {
+      ({ job } = await api(`/api/v1/scans/${jobId}`));
+    } catch (error) {
+      clearInterval(scanTimer);
+      scanFail(error);
+      document.getElementById("scan-start").disabled = false;
+      return;
+    }
+    scanEls.progress.max = job.total || 1;
+    scanEls.progress.value = job.done;
+    scanEls.status.textContent = job.status === "running"
+      ? `Проверено ${job.done} из ${job.total} адресов… через туннель это несколько минут.`
+      : "";
+    if (job.status === "running") return;
+    clearInterval(scanTimer);
+    document.getElementById("scan-start").disabled = false;
+    scanEls.progress.hidden = true;
+    if (job.status === "error") scanFail(new Error(job.error));
+    else renderScanResults(job);
+  };
+  tick();
+  scanTimer = setInterval(tick, 1500);
+}
+
+function renderScanResults(job) {
+  const fresh = job.results.filter((r) => !r.existing);
+  scanEls.status.textContent = `Найдено ${job.results.length}: новых ${fresh.length}, `
+    + `уже в панели ${job.results.length - fresh.length}.`;
+  const table = document.createElement("table");
+  table.className = "scan-table";
+  table.innerHTML = "<thead><tr><th></th><th>Адрес</th><th>Порты</th><th>Что это</th>"
+    + "<th>Имя</th><th>Категория</th><th></th></tr></thead>";
+  const body = document.createElement("tbody");
+  scanRows = job.results.map((item) => {
+    const tr = document.createElement("tr");
+    const cell = (node) => { const td = document.createElement("td"); td.append(node); tr.append(td); return td; };
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.disabled = !!item.existing;
+    const name = document.createElement("input");
+    name.value = item.existing ? item.existing.name : item.name;
+    name.disabled = !!item.existing;
+    const category = document.createElement("input");
+    category.value = item.category;
+    category.setAttribute("list", "category-options");
+    category.disabled = !!item.existing;
+    const what = [item.vendor, item.model, item.title].filter(Boolean).join(" · ") || "—";
+    cell(check);
+    cell(document.createTextNode(item.host));
+    cell(document.createTextNode(item.ports.join(", ")));
+    cell(document.createTextNode(what));
+    cell(name);
+    cell(category);
+    const status = document.createElement("span");
+    status.className = item.existing ? "scan-known" : "scan-new";
+    status.textContent = item.existing ? "уже есть" : "новое";
+    cell(status);
+    body.append(tr);
+    return { item, check, name, category, status };
+  });
+  table.append(body);
+  scanEls.results.textContent = "";
+  scanEls.results.append(table);
+  if (job.missing.length) {
+    const missing = document.createElement("p");
+    missing.className = "hint scan-missing";
+    missing.textContent = "Заведены в панели, но в скане не ответили: "
+      + job.missing.map((m) => `${m.name} (${m.host})`).join(", ");
+    scanEls.results.append(missing);
+  }
+  scanEls.add.hidden = scanEls.checkNew.hidden = !fresh.length;
+  scanEls.ai.hidden = !fresh.length || !state.assistant_configured;
+}
+
+scanEls.checkNew.onclick = () => scanRows.forEach((r) => { if (!r.check.disabled) r.check.checked = true; });
+
+scanEls.ai.onclick = async () => {
+  const rows = scanRows.filter((r) => !r.check.disabled);
+  scanEls.ai.disabled = true;
+  scanEls.error.hidden = true;
+  try {
+    const { suggestions } = await api("/api/v1/assistant/names", {
+      method: "POST",
+      body: JSON.stringify({ candidates: rows.map((r) => ({ ...r.item, name: r.name.value })) }),
+    });
+    const byHost = new Map(suggestions.map((s) => [s.host, s]));
+    rows.forEach((r) => {
+      const s = byHost.get(r.item.host);
+      if (!s) return;
+      if (s.name) r.name.value = s.name;
+      if (s.category) r.category.value = s.category;
+    });
+    scanEls.status.textContent += " Имена предложены ИИ — проверьте перед добавлением.";
+  } catch (error) {
+    scanFail(error);
+  } finally {
+    scanEls.ai.disabled = false;
+  }
+};
+
+scanEls.add.onclick = async () => {
+  const chosen = scanRows.filter((r) => r.check.checked && !r.check.disabled);
+  if (!chosen.length) {
+    scanFail(new Error("Ничего не отмечено"));
+    return;
+  }
+  scanEls.add.disabled = true;
+  scanEls.error.hidden = true;
+  let added = 0;
+  const errors = [];
+  for (const r of chosen) {
+    const ports = MONITOR_PORT_ORDER.filter((p) => r.item.ports.includes(p)).slice(0, 3);
+    try {
+      await api("/api/v1/devices", {
+        method: "POST",
+        body: JSON.stringify({
+          site: scanSite, category: r.category.value.trim(), name: r.name.value.trim(),
+          host: r.item.host, ports: ports.length ? ports : r.item.ports.slice(0, 3),
+          web_port: r.item.web_port && r.item.web_port !== 80 ? r.item.web_port : null,
+        }),
+      });
+      added += 1;
+      r.check.checked = false;
+      r.check.disabled = r.name.disabled = r.category.disabled = true;
+      r.status.className = "scan-known";
+      r.status.textContent = "добавлено";
+    } catch (error) {
+      errors.push(`${r.item.host}: ${error.message}`);
+    }
+  }
+  scanEls.add.disabled = false;
+  scanEls.status.textContent = `Добавлено ${added}.` + (errors.length ? ` Ошибки: ${errors.join("; ")}` : "");
+  await refresh();
+};
+
+document.getElementById("scan-close").onclick = () => scanDialog.close();
+// Закрытие любым способом (кнопка, Esc) останавливает опрос прогресса; сам
+// скан на сервере доработает, а повторное открытие начнёт с чистого листа.
+scanDialog.addEventListener("close", () => {
+  clearInterval(scanTimer);
+  document.getElementById("scan-start").disabled = false;
+});
+
+// ---------------------------------------------------------------------------
+// ИИ-помощник: настройки провайдера
+// ---------------------------------------------------------------------------
+
+const assistantEditor = document.getElementById("assistant-editor");
+const assistantForm = document.getElementById("assistant-form");
+const assistantError = document.getElementById("assistant-error");
+
+function fillAssistant(s) {
+  assistantForm.base_url.value = s.base_url || "";
+  assistantForm.model.value = s.model || "";
+  assistantForm.api_key.value = "";
+  assistantForm.api_key.placeholder = s.has_key ? "сохранён — пусто = не менять" : "";
+  assistantForm.enabled.checked = s.enabled;
+}
+
+function assistantPayload() {
+  const payload = {
+    base_url: assistantForm.base_url.value.trim(),
+    model: assistantForm.model.value.trim(),
+    enabled: assistantForm.enabled.checked,
+  };
+  if (assistantForm.api_key.value.trim()) payload.api_key = assistantForm.api_key.value.trim();
+  return payload;
+}
+
+document.getElementById("assistant").onclick = async () => {
+  assistantError.hidden = true;
+  document.getElementById("as-status").textContent = "";
+  try {
+    fillAssistant(await api("/api/v1/assistant"));
+  } catch (error) {
+    assistantError.textContent = error.message;
+    assistantError.hidden = false;
+  }
+  assistantEditor.showModal();
+};
+document.getElementById("assistant-cancel").onclick = () => assistantEditor.close();
+document.getElementById("as-test").onclick = async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  assistantError.hidden = true;
+  try {
+    fillAssistant(await api("/api/v1/assistant", { method: "PUT", body: JSON.stringify(assistantPayload()) }));
+    await api("/api/v1/assistant/test", { method: "POST" });
+    document.getElementById("as-status").textContent = "Модель отвечает.";
+  } catch (error) {
+    assistantError.textContent = error.message;
+    assistantError.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+};
+assistantForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await api("/api/v1/assistant", { method: "PUT", body: JSON.stringify(assistantPayload()) });
+    assistantEditor.close();
+    await refresh();
+  } catch (error) {
+    assistantError.textContent = error.message;
+    assistantError.hidden = false;
   }
 });
 

@@ -92,6 +92,17 @@ class AlertSettingsIn(BaseModel):
     heartbeat_url: str | None = Field(default=None, max_length=300)
 
 
+class ScanIn(BaseModel):
+    subnet: str = Field(min_length=1, max_length=43)
+
+
+class AssistantIn(BaseModel):
+    base_url: str | None = Field(default=None, max_length=300)
+    model: str | None = Field(default=None, max_length=120)
+    api_key: str | bool | None = None
+    enabled: bool | None = None
+
+
 class MuteIn(BaseModel):
     kind: str = Field(pattern="^(site|device)$")
     target: str = Field(min_length=1, max_length=120)

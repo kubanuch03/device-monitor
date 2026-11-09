@@ -10,6 +10,8 @@ from pathlib import Path
 from device_monitor import config
 from device_monitor.access.relay import RelayManager
 from device_monitor.alerts.service import AlertService
+from device_monitor.assist.llm import Assistant
+from device_monitor.discovery.jobs import ScanJobs
 from device_monitor.domain.models import Device, Site
 from device_monitor.probing.monitor import Monitor
 from device_monitor.security import hash_password
@@ -21,6 +23,8 @@ class App:
         self.storage = storage or SqlAlchemyStorage(config.DB_PATH)
         self.alerts = AlertService(self.storage, run_sender=config.MONITOR_ENABLED)
         self.relay = RelayManager(self.storage)
+        self.scans = ScanJobs(self.storage)
+        self.assistant = Assistant(self.storage)
         self.monitor = Monitor(self.storage, self.alerts, self.relay)
         self._ensure_default_user()
 

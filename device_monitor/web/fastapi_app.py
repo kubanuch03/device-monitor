@@ -22,7 +22,7 @@ from device_monitor.domain.errors import ConflictError, ValidationError
 from device_monitor.security import SESSIONS, THROTTLE, hash_password, verify_password
 from device_monitor.web import api
 from device_monitor.web.schemas import (
-    AccountIn, AlertSettingsIn, CategoryIn, DeviceIn, LoginIn, MuteIn, SiteIn,
+    AccountIn, AlertSettingsIn, AssistantIn, CategoryIn, DeviceIn, LoginIn, MuteIn, ScanIn, SiteIn,
 )
 
 APP_STATE: dict = {}
@@ -207,6 +207,41 @@ def alert_chats():
 @app.post("/api/v1/mutes", dependencies=[Depends(require_auth)])
 def set_mute(body: MuteIn):
     return _unwrap(api.set_mute(core(), body.model_dump()))
+
+
+@app.get("/api/v1/sites/{name}/scan", dependencies=[Depends(require_auth)])
+def scan_hint(name: str):
+    return _unwrap(api.scan_hint(core(), name))
+
+
+@app.post("/api/v1/sites/{name}/scan", dependencies=[Depends(require_auth)])
+def start_scan(name: str, body: ScanIn):
+    return _unwrap(api.start_scan(core(), name, body.model_dump()))
+
+
+@app.get("/api/v1/scans/{job_id}", dependencies=[Depends(require_auth)])
+def scan_status(job_id: str):
+    return _unwrap(api.scan_status(core(), job_id))
+
+
+@app.get("/api/v1/assistant", dependencies=[Depends(require_auth)])
+def assistant_settings():
+    return _unwrap(api.assistant_settings(core()))
+
+
+@app.put("/api/v1/assistant", dependencies=[Depends(require_auth)])
+def update_assistant(body: AssistantIn):
+    return _unwrap(api.update_assistant(core(), body.model_dump(exclude_none=True)))
+
+
+@app.post("/api/v1/assistant/test", dependencies=[Depends(require_auth)])
+def assistant_test():
+    return _unwrap(api.assistant_test(core()))
+
+
+@app.post("/api/v1/assistant/names", dependencies=[Depends(require_auth)])
+def assistant_names(body: dict = Body(...)):
+    return _unwrap(api.assistant_names(core(), body))
 
 
 @app.get("/api/v1/tray")
