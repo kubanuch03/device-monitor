@@ -28,11 +28,15 @@ let topologyView = localStorage.getItem(VIEW_KEY) !== "list";
 //   #site=X          - категории точки X
 //   #site=X&cat=Y    - устройства категории Y
 //   #site=X&cat=     - устройства без категории (параметр есть, но пустой)
+//   #q=текст         - поиск по всем точкам
+//   #down=1          - все, кто не отвечает, по всем точкам
 function route() {
   const params = new URLSearchParams((location.hash || "").replace(/^#/, ""));
   return {
     site: params.get("site"),
     category: params.has("cat") ? params.get("cat") : null,
+    query: (params.get("q") || "").trim(),
+    onlyDown: params.has("down"),
   };
 }
 
@@ -831,6 +835,159 @@ function renderCategoriesScreen(site) {
 // экран 3: устройства категории
 // ---------------------------------------------------------------------------
 
+function renderSummary(scope, local) {
+  const up = scope.filter((d) => d.status === "up").length;
+  const down = scope.filter((d) => d.status === "down").length;
+  els.summary.innerHTML = scope.length
+    ? `<span>${local ? "здесь" : "устройств"} <b>${scope.length}</b></span>` +
+      `<span class="s-up">на связи <b>${up}</b></span>` +
+      `<span class="s-down">не отвечают <b>${down}</b></span>`
+    : "";
+  const downEl = els.summary.querySelector(".s-down");
+  if (downEl && down) {
+    downEl.classList.add("link");
+    downEl.title = "Показать всех, кто не отвечает";
+    downEl.onclick = () => { location.hash = "down=1"; };
+  }
+  els.updated.textContent = state.updated_at ? `проверено ${ago(state.updated_at)} назад` : "";
+}
+
+// ---------------------------------------------------------------------------
+// поиск и «все, кто не отвечает» - поперёк точек
+// ---------------------------------------------------------------------------
+
+function matchesQuery(device, words) {
+  const facts = device.facts || {};
+  const haystack = [device.name, device.host, device.site, device.category, device.note,
+    device.open_url, facts.model, facts.serial, facts.vendor]
+    .filter(Boolean).join(" ").toLowerCase();
+  return words.every((word) => haystack.includes(word));
+}
+
+function renderFindScreen(query, onlyDown) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const found = (state.devices || [])
+    .filter((d) => !onlyDown || d.status === "down")
+    .filter((d) => !words.length || matchesQuery(d, words));
+
+  const title = onlyDown && !query ? "Не отвечают" : `Поиск «${query}»`;
+  const subtitle = found.length
+    ? `${countLabel(found)} на ${new Set(found.map((d) => d.site)).size} точках`
+    : "ничего не нашлось";
+  els.view.append(
+    crumb("← Все точки", () => { location.hash = ""; }),
+    screenHead(title, subtitle, "", null)
+  );
+
+  // По точкам: «не отвечает весь объект» и «одна камера» - разные проблемы,
+  // и видно это, только когда устройства сгруппированы.
+  const bySite = new Map();
+  found.sort((a, b) => a.site.localeCompare(b.site, "ru") || a.name.localeCompare(b.name, "ru"))
+    .forEach((d) => {
+      if (!bySite.has(d.site)) bySite.set(d.site, []);
+      bySite.get(d.site).push(d);
+    });
+  bySite.forEach((items, siteName) => {
+    const info = siteInfo(siteName) || {};
+    const total = devicesOf(siteName, null).length;
+    const head = document.createElement("h2");
+    head.className = "find-site";
+    const link = document.createElement("a");
+    link.href = "#" + new URLSearchParams({ site: siteName }).toString();
+    link.textContent = siteName;
+    const meta = document.createElement("span");
+    meta.className = "find-site-meta";
+    meta.textContent = onlyDown
+      ? ` — не отвечают ${items.length} из ${total}${info.tunnel === "down" ? " · нет связи с туннелем" : ""}`
+      : ` — ${countLabel(items)}`;
+    head.append(link, meta);
+    if (info.muted_until) {
+      const muted = document.createElement("span");
+      muted.className = "find-site-meta";
+      muted.textContent = " · 🔕 тревоги выключены";
+      head.append(muted);
+    }
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    items.forEach((device) => grid.append(deviceCard(device)));
+    els.view.append(head, grid);
+  });
+}
+
+const searchBox = document.getElementById("search");
+let searchTimer = null;
+
+function syncSearchBox(query) {
+  // Пока человек печатает, поле не трогаем - иначе перерисовка раз в
+  // несколько секунд сбивала бы курсор.
+  if (document.activeElement !== searchBox) searchBox.value = query;
+}
+
+searchBox.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    // replaceState, а не location.hash: иначе каждая пауза при наборе
+    // ложилась бы в историю, и «Назад» шагал бы по буквам.
+    const text = searchBox.value.trim();
+    const hash = text ? "#" + new URLSearchParams({ q: text }).toString() : "";
+    history.replaceState(null, "", hash || location.pathname);
+    render();
+  }, 250);
+});
+searchBox.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    searchBox.value = "";
+    history.replaceState(null, "", location.pathname);
+    render();
+    searchBox.blur();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  // «/» - быстрый переход в поиск, как в GitHub и Gmail.
+  if (event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey
+      && !event.target.closest("input, textarea, select, dialog")) {
+    event.preventDefault();
+    searchBox.focus();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// тема и меню «⋯»
+// ---------------------------------------------------------------------------
+
+const THEME_KEY = "dm_theme";
+const THEMES = [["", "Тема: как в системе"], ["light", "Тема: светлая"], ["dark", "Тема: тёмная"]];
+
+function applyTheme(value) {
+  if (value) document.documentElement.dataset.theme = value;
+  else delete document.documentElement.dataset.theme;
+  const label = (THEMES.find(([v]) => v === value) || THEMES[0])[1];
+  document.getElementById("theme").textContent = label;
+}
+
+// Текущая тема держится в переменной: без localStorage (приватный режим)
+// переключатель иначе залипал бы, всегда читая «как в системе».
+let currentTheme = (() => {
+  try { return localStorage.getItem(THEME_KEY) || ""; } catch (e) { return ""; }
+})();
+
+applyTheme(currentTheme);
+document.getElementById("theme").onclick = () => {
+  const order = THEMES.map(([v]) => v);
+  currentTheme = order[(order.indexOf(currentTheme) + 1) % order.length];
+  try { localStorage.setItem(THEME_KEY, currentTheme); } catch (e) { /* приватный режим */ }
+  applyTheme(currentTheme);
+};
+
+const moreMenu = document.getElementById("more-menu");
+moreMenu.querySelectorAll(".menu button").forEach((button) => {
+  // Тему переключают несколько раз подряд - меню для неё не закрываем.
+  if (button.id !== "theme") button.addEventListener("click", () => { moreMenu.open = false; });
+});
+document.addEventListener("click", (event) => {
+  if (moreMenu.open && !moreMenu.contains(event.target)) moreMenu.open = false;
+});
+
 function renderDevicesScreen(site, category) {
   const items = devicesOf(site, category).sort((a, b) => a.name.localeCompare(b.name, "ru"));
   const title = category || UNCATEGORIZED;
@@ -916,8 +1073,14 @@ function render() {
   const hasAnything = devices.length > 0 || (state.sites || []).length > 0;
   els.empty.hidden = hasAnything;
 
-  const { site, category } = route();
+  const { site, category, query, onlyDown } = route();
   syncViewToggle();
+  syncSearchBox(query);
+  const downTotal = devices.filter((d) => d.status === "down").length;
+  // Число упавших - в заголовке вкладки: видно, даже когда панель в фоне.
+  document.title = downTotal ? `(${downTotal}) Device Monitor` : "Device Monitor";
+
+  const finding = hasAnything && !!(query || onlyDown);
 
   // Точка или категория могли исчезнуть, пока экран был открыт. Молча
   // поднимаемся на уровень выше вместо экрана несуществующего раздела.
@@ -934,17 +1097,12 @@ function render() {
     }
   }
 
-  const scope = site ? devicesOf(site, category) : devices;
-  const up = scope.filter((d) => d.status === "up").length;
-  const down = scope.filter((d) => d.status === "down").length;
-  els.summary.innerHTML = scope.length
-    ? `<span>${site ? "здесь" : "устройств"} <b>${scope.length}</b></span>` +
-      `<span class="s-up">на связи <b>${up}</b></span>` +
-      `<span class="s-down">не отвечают <b>${down}</b></span>`
-    : "";
-  els.updated.textContent = state.updated_at ? `проверено ${ago(state.updated_at)} назад` : "";
+  renderSummary(site && !finding ? devicesOf(site, category) : devices, !!site && !finding);
 
-  if (hasAnything) {
+  // Без раннего return: баннер про VPN и подсказки точек/категорий ниже
+  // нужны и на экране поиска - особенно на «не отвечают».
+  if (finding) renderFindScreen(query, onlyDown);
+  else if (hasAnything) {
     if (site && category !== null) renderDevicesScreen(site, category);
     else if (site) renderCategoriesScreen(site);
     else renderSitesScreen();
@@ -1042,9 +1200,15 @@ function openGroupEditor(kind, name, site) {
   document.getElementById("g-creds-field").hidden = !isSite;
   groupForm.username.value = isSite ? (info.username || "") : "";
   groupForm.password.value = "";
+  groupForm.password.disabled = false;
   groupForm.password.type = "password";
   if (groupEye) groupEye.innerHTML = EYE;
-  groupForm.password.placeholder = isSite && info.has_password ? "сохранён — пусто = не менять" : "";
+  groupHasPassword = !!(isSite && name && info.has_password);
+  groupClearPassword = false;
+  groupForm.password.placeholder = groupHasPassword ? "нажмите глаз, чтобы показать сохранённый" : "";
+  document.getElementById("g-password-hint").textContent =
+    "Общая учётка объекта. Устройства берут её, только если у них это включено явно.";
+  syncClearButton("g", groupHasPassword, false);
   groupDelete.hidden = !name;
   groupDelete.textContent = isSite ? "Удалить точку" : "Удалить категорию";
   groupError.hidden = true;
@@ -1060,8 +1224,9 @@ groupForm.addEventListener("submit", async (event) => {
     payload.proxy = groupForm.proxy.value;
     payload.stream_base = groupForm.stream_base.value;
     payload.username = groupForm.username.value;
-    // Пустое поле = «не менять», см. clean_password() на бэкенде.
+    // Пустое поле = «не менять», false = «удалить», см. clean_password().
     if (groupForm.password.value) payload.password = groupForm.password.value;
+    else if (groupClearPassword) payload.password = false;
   }
   try {
     let result;
@@ -1122,10 +1287,49 @@ document.getElementById("group-cancel").onclick = () => groupEditor.close();
 // ---------------------------------------------------------------------------
 
 let editingHasPassword = false;
+let editingClearPassword = false;
+let groupHasPassword = false;
+let groupClearPassword = false;
+
+/** Кнопка «Удалить сохранённый пароль»: видна, пока пароль есть. Нажатие
+ *  только помечает удаление - сохраняется оно вместе с формой. */
+function syncClearButton(prefix, hasPassword, clearing) {
+  const button = document.getElementById(`${prefix}-password-clear`);
+  const hint = document.getElementById(`${prefix}-password-hint`);
+  button.hidden = !hasPassword;
+  button.textContent = clearing ? "Не удалять пароль" : "Удалить сохранённый пароль";
+  if (clearing) hint.textContent = "Пароль будет удалён при сохранении.";
+}
+
+document.getElementById("f-password-clear").onclick = () => {
+  editingClearPassword = !editingClearPassword;
+  els.form.password.value = "";
+  els.form.password.disabled = editingClearPassword;
+  if (!editingClearPassword) {
+    document.getElementById("f-password-hint").textContent =
+      "Пароль сохранён. Глаз — показать текущий; впишите другой — заменить; оставите пустым — не изменится.";
+  }
+  syncClearButton("f", true, editingClearPassword);
+};
+
+document.getElementById("g-password-clear").onclick = () => {
+  groupClearPassword = !groupClearPassword;
+  groupForm.password.value = "";
+  groupForm.password.disabled = groupClearPassword;
+  if (!groupClearPassword) {
+    document.getElementById("g-password-hint").textContent =
+      "Общая учётка объекта. Устройства берут её, только если у них это включено явно.";
+  }
+  syncClearButton("g", true, groupClearPassword);
+};
 
 function openEditor(device, preset, asCopy) {
   editingId = asCopy ? null : device ? device.id : null;
-  editingHasPassword = !!(device && device.has_password) && !asCopy;
+  // Форма работает с СОБСТВЕННОЙ учёткой устройства. Эффективная (has_password)
+  // может прийти от точки: заполни форму ею - и при сохранении пароль точки
+  // записался бы как собственный пароль устройства.
+  editingHasPassword = !!(device && device.own_has_password) && !asCopy;
+  editingClearPassword = false;
   els.title.textContent = asCopy
     ? "Копия устройства"
     : device ? "Настройки устройства" : "Новое устройство";
@@ -1141,14 +1345,16 @@ function openEditor(device, preset, asCopy) {
   els.form.ports.value = device ? device.ports.join(", ") : "80";
   els.form.web_port.value = device && device.web_port ? device.web_port : "";
   els.form.path.value = device ? device.path || "/" : "";
-  els.form.username.value = device ? device.username || "" : "";
+  els.form.username.value = device ? device.own_username || "" : "";
   // Пароль write-only: в форме всегда пусто, существующий не показываем и не
   // отдаём наружу. Плейсхолдер сообщает, задан ли он и что пустое поле = «не
   // менять». У копии пароль не переносим (это другое устройство).
   els.form.password.value = "";
+  els.form.password.disabled = false;
   els.form.password.type = "password";
   if (pwEye) pwEye.innerHTML = EYE;
-  const hasPass = !!(device && device.has_password) && !asCopy;
+  const hasPass = editingHasPassword;
+  syncClearButton("f", hasPass, false);
   els.form.password.placeholder = hasPass ? "нажмите глаз, чтобы показать сохранённый" : "";
   document.getElementById("f-password-hint").textContent = hasPass
     ? "Пароль сохранён. Глаз — показать текущий; впишите другой — заменить; оставите пустым — не изменится."
@@ -1182,8 +1388,10 @@ els.form.addEventListener("submit", async (event) => {
     use_site_creds: inheritBox.checked,
     note: els.form.note.value,
   };
-  // Пароль шлём только если поле заполнено: пустое = «не менять» (см. бэкенд).
+  // Пароль шлём только если поле заполнено: пустое = «не менять», false =
+  // «удалить» (см. clean_password() на бэкенде).
   if (els.form.password.value) payload.password = els.form.password.value;
+  else if (editingClearPassword) payload.password = false;
   try {
     const result = editingId
       ? await api(`/api/v1/devices/${editingId}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -1223,18 +1431,40 @@ function syncInherit() {
 
 inheritBox.addEventListener("change", () => {
   if (inheritBox.checked) {
-    // Свои поля очищаем сразу: иначе на устройстве остался бы храниться пароль,
-    // которым мы всё равно не пользуемся, - лишний секрет в базе без смысла.
+    // Свои поля очищаем, а сохранённый пароль помечаем к удалению: пустое
+    // поле на бэкенде значит «не менять», и без этого пароль, которым мы
+    // больше не пользуемся, остался бы лежать в базе.
     els.form.username.value = "";
     els.form.password.value = "";
+    editingClearPassword = editingHasPassword;
+  } else {
+    editingClearPassword = false;
   }
   syncInherit();
 });
 
 if (groupEye) {
-  groupEye.onclick = () => {
-    const shown = groupForm.password.type === "text";
-    groupForm.password.type = shown ? "password" : "text";
+  groupEye.innerHTML = EYE;
+  groupEye.onclick = async () => {
+    const field = groupForm.password;
+    // Как у устройства: пустое поле и сохранённый пароль - глаз подгружает
+    // его. Раньше здесь только переключался тип пустого поля, и пароль точки
+    // увидеть было нельзя вовсе.
+    if (!field.value && groupHasPassword && groupOriginal && !groupClearPassword) {
+      groupEye.disabled = true;
+      try {
+        const data = await api(`/api/v1/sites/${encodeURIComponent(groupOriginal)}/secret`);
+        field.value = data.password || "";
+      } catch (error) {
+        groupError.textContent = error.message;
+        groupError.hidden = false;
+        return;
+      } finally {
+        groupEye.disabled = false;
+      }
+    }
+    const shown = field.type === "text";
+    field.type = shown ? "password" : "text";
     groupEye.innerHTML = shown ? EYE : EYE_OFF;
   };
 }
@@ -1244,17 +1474,20 @@ pwEye.onclick = async () => {
   // Поле пустое, но у устройства пароль сохранён — глаз его подгружает и
   // показывает (через отдельный эндпоинт /secret, залогиненному). Дальше
   // просто переключает видимость.
-  if (!field.value && editingHasPassword && editingId) {
+  if (!field.value && editingHasPassword && editingId && !editingClearPassword) {
     pwEye.disabled = true;
     try {
-      const data = await api(`/api/v1/devices/${editingId}/secret`);
+      const data = await api(`/api/v1/devices/${editingId}/secret?own=true`);
       field.value = data.password || "";
     } catch (error) {
-      showAlert(error.message);
-      pwEye.disabled = false;
+      // Ошибку - в саму форму: баннер страницы лежит под модальным окном,
+      // и раньше глаз из-за этого «молча ничего не делал».
+      els.formError.textContent = error.message;
+      els.formError.hidden = false;
       return;
+    } finally {
+      pwEye.disabled = false;
     }
-    pwEye.disabled = false;
   }
   const shown = field.type === "text";
   field.type = shown ? "password" : "text";

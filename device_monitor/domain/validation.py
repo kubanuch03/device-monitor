@@ -90,6 +90,11 @@ def clean_name(payload: dict, limit: int, what: str) -> tuple[str, str]:
     name = CONTROL_RE.sub("", str(payload.get("name") or "").strip())[:limit]
     if not name:
         raise ValidationError(f"Название {what} не может быть пустым")
+    # Имя точки и категории - часть адреса API (/sites/<имя>/...). Слэш
+    # роутер воспринимает как разделитель даже в закодированном виде, и
+    # такую точку потом нельзя было бы ни изменить, ни удалить.
+    if "/" in name:
+        raise ValidationError(f"В названии {what} не может быть «/»")
     note = CONTROL_RE.sub("", str(payload.get("note") or "").strip())[:400]
     return name, note
 

@@ -133,7 +133,7 @@ button.danger:hover { border-color: var(--down); color: var(--down); }
 .summary .s-down b { color: var(--down); }
 .summary span { color: var(--muted); font-size: 13px; }
 
-.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .updated { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
 /* ---------- page ---------- */
@@ -700,3 +700,29 @@ button.warn { border-color: var(--down); color: var(--down); }
 /* hidden должен скрывать и элементы с display:flex (.field, .row): без этого
    правило класса перебивает атрибут, и «скрытое» поле видно. */
 [hidden] { display: none !important; }
+
+/* Поиск, меню «⋯», экран «не отвечают» */
+.search { width: 12rem; padding: 6px 10px; font-size: 13px; }
+.s-down.link { cursor: pointer; text-decoration: underline dotted; }
+.more-menu { position: relative; }
+.more-menu summary {
+  list-style: none; cursor: pointer; padding: 6px 12px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--paper); font-weight: 600; user-select: none;
+}
+.more-menu summary::-webkit-details-marker { display: none; }
+.more-menu .menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 13rem;
+  display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow);
+}
+.more-menu .menu button { text-align: left; border-color: transparent; }
+.find-site { font-size: 15px; margin: 22px 0 10px; }
+.find-site a { color: inherit; }
+.find-site-meta { font-weight: 400; color: var(--muted); font-size: 13px; }
+.pw-clear { align-self: flex-start; padding: 2px 0; font-size: 12px; }
+
+@media (max-width: 700px) {
+  .search { width: 100%; order: -1; }
+  .topbar-actions { gap: 6px; }
+  .topbar-actions > button, .view-toggle button { padding: 5px 9px; font-size: 12.5px; }
+}

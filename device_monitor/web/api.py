@@ -45,6 +45,11 @@ def state(app) -> tuple[int, dict]:
             {
                 "username": username,
                 "has_password": bool(password_enc),
+                # Собственная учётка устройства - для формы редактирования.
+                # Эффективная (выше) могла прийти от точки, и форма, заполненная
+                # ею, сохранила бы пароль точки как собственный пароль устройства.
+                "own_username": device.username,
+                "own_has_password": bool(device.password_enc),
                 "status": current.get("status", "unknown"),
                 "ports_state": current.get("ports", {}),
                 "latency_ms": current.get("latency_ms"),
@@ -137,21 +142,38 @@ def device_history(app, device_id: str) -> tuple[int, dict]:
     }
 
 
-def device_secret(app, device_id: str) -> tuple[int, dict]:
+def device_secret(app, device_id: str, own: bool = False) -> tuple[int, dict]:
     """Отдаёт логин и пароль устройства - единственная точка, где пароль
-    покидает сервис. Намеренно отдельный эндпоинт, а не поле в /api/state:
-    общий стейт рефрешится каждые несколько секунд и кэшируется, а секрет
+    устройства покидает сервис. Намеренно отдельный эндпоинт, а не поле в
+    /api/state: общий стейт рефрешится каждые несколько секунд, а секрет
     должен доставаться только по явному запросу залогиненного пользователя.
-    Доступ уже отфильтрован авторизацией на уровне транспорта.
+
+    own=False - учётка, под которой реально пойдём на устройство (для
+    «Открыть»); own=True - собственная учётка устройства (для формы).
     """
     device = app.storage.device(device_id)
     if device is None:
         return HTTPStatus.NOT_FOUND, {"detail": "Устройство не найдено"}
-    username, password_enc = effective(device, app.storage.site(device.site))
+    if own:
+        username, password_enc = device.username, device.password_enc
+    else:
+        username, password_enc = effective(device, app.storage.site(device.site))
     return HTTPStatus.OK, {
         "username": username,
         "password": deobfuscate(password_enc) if password_enc else "",
         "has_password": bool(password_enc),
+    }
+
+
+def site_secret(app, name: str) -> tuple[int, dict]:
+    """Общая учётка точки - для «глаза» в настройках точки."""
+    site = app.storage.site(name)
+    if site is None:
+        return HTTPStatus.NOT_FOUND, {"detail": "Точка не найдена"}
+    return HTTPStatus.OK, {
+        "username": site.username,
+        "password": deobfuscate(site.password_enc) if site.password_enc else "",
+        "has_password": bool(site.password_enc),
     }
 
 

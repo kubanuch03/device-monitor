@@ -257,8 +257,13 @@ def device_history(device_id: str):
 
 
 @app.get("/api/v1/devices/{device_id}/secret", dependencies=[Depends(require_auth)])
-def device_secret(device_id: str):
-    return _unwrap(api.device_secret(core(), device_id))
+def device_secret(device_id: str, own: bool = False):
+    return _unwrap(api.device_secret(core(), device_id, own))
+
+
+@app.get("/api/v1/sites/{name}/secret", dependencies=[Depends(require_auth)])
+def site_secret(name: str):
+    return _unwrap(api.site_secret(core(), name))
 
 
 @app.post("/api/v1/devices/{device_id}/inspect", dependencies=[Depends(require_auth)])
