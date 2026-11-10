@@ -1,0 +1,15 @@
+# Сервис мониторинга Device Monitor (ставится пакетом .deb).
+# Работает от имени пользователя, данные - в его домашнем каталоге.
+[Unit]
+Description=Device Monitor — сервис мониторинга оборудования
+
+[Service]
+ExecStart=/usr/lib/device-monitor/server/device-monitor-server
+Environment=DM_DATA_DIR=%h/.local/share/device-monitor/data
+Environment=DM_HOST=127.0.0.1
+Environment=DM_PORT=8890
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

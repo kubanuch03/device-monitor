@@ -21,8 +21,12 @@ from device_monitor import config
 def main() -> None:
     # Приложение (хранилище + фоновый опрос) поднимается в lifespan FastAPI —
     # см. device_monitor/web/fastapi_app.py. Здесь только запуск ASGI-сервера.
+    # Объект, а не строка "модуль:app": так импорт виден статически, и
+    # упаковка в один исполняемый файл (PyInstaller, .deb) его не теряет.
+    from device_monitor.web.fastapi_app import app
+
     uvicorn.run(
-        "device_monitor.web.fastapi_app:app",
+        app,
         host=config.HOST,
         port=config.PORT,
         log_level="warning",

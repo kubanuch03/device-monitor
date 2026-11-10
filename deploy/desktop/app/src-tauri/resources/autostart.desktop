@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Device Monitor — значок
+Comment=Значок в трее и уведомления о падениях оборудования
+Exec=device-monitor --tray
+Icon=device-monitor
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

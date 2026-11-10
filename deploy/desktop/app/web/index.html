@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Device Monitor</title>
+<style>
+  body { font: 15px system-ui, sans-serif; background: #0e1316; color: #e5ecec;
+         display: grid; place-items: center; height: 100vh; margin: 0; }
+  div { max-width: 34rem; line-height: 1.5; text-align: center; }
+  code { background: #1d272c; padding: 2px 6px; border-radius: 4px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+         background: #4fb0b9; animation: pulse 1.2s infinite; margin-right: 8px; }
+  @keyframes pulse { 50% { opacity: .3; } }
+</style>
+</head>
+<body>
+<div>
+  <h2><span class="dot"></span>Подключаюсь к сервису…</h2>
+  <p id="hint">Сервис мониторинга запускается вместе с входом в систему.</p>
+</div>
+<script>
+  // Адрес панели передаёт программа (?target=...). Пока сервис не отвечает -
+  // ждём здесь, а не показываем пустую страницу ошибки.
+  const target = new URLSearchParams(location.search).get("target") || "http://127.0.0.1:8890";
+  let tries = 0;
+  async function check() {
+    tries += 1;
+    try {
+      // no-cors: ответ непрозрачный, но успех запроса = сервис жив.
+      await fetch(target + "/api/v1/health", { mode: "no-cors", cache: "no-store" });
+      location.replace(target + "/");
+      return;
+    } catch (e) { /* ещё не поднялся */ }
+    if (tries === 5) {
+      document.getElementById("hint").innerHTML =
+        "Сервис не отвечает. Запуск вручную: <code>systemctl --user start device-monitor</code>";
+    }
+    setTimeout(check, 2000);
+  }
+  check();
+</script>
+</body>
+</html>

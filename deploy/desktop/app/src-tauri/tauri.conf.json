@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Device Monitor",
+  "mainBinaryName": "device-monitor",
+  "version": "1.0.0",
+  "identifier": "kg.devicemonitor.app",
+  "build": {
+    "frontendDist": "../web"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb"
+    ],
+    "category": "Utility",
+    "shortDescription": "Мониторинг камер и оборудования объектов",
+    "longDescription": "Проверяет доступность камер, домофонов, коммутаторов и серверов на объектах через VPN и туннели, присылает оповещения в Telegram и на рабочий стол, открывает веб-интерфейсы устройств и видео.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libayatana-appindicator3-1"
+        ],
+        "files": {
+          "/usr/lib/systemd/user/device-monitor.service": "resources/device-monitor.service",
+          "/usr/lib/device-monitor/server": "../../../../build/server/dist/device-monitor-server",
+          "/etc/xdg/autostart/device-monitor.desktop": "resources/autostart.desktop"
+        },
+        "postInstallScript": "resources/postinst.sh",
+        "preRemoveScript": "resources/prerm.sh"
+      }
+    }
+  }
+}

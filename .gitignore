@@ -55,3 +55,10 @@ Thumbs.db
 
 # Конфиг go2rtc содержит пароли камер — в репозитории только пример
 /config/go2rtc.yaml
+
+# Сборка программы для Linux (Tauri)
+/deploy/desktop/app/node_modules/
+/deploy/desktop/app/src-tauri/target/
+/deploy/desktop/app/src-tauri/gen/
+/deploy/desktop/dist/
+/build/

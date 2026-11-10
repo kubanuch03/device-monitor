@@ -1,0 +1,11 @@
+{
+  "name": "device-monitor-desktop",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tauri build --bundles deb"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.9.6"
+  }
+}
