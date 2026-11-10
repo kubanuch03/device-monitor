@@ -9,6 +9,7 @@ from pathlib import Path
 
 from device_monitor import config
 from device_monitor.access.relay import RelayManager
+from device_monitor.access.tunnels import TunnelManager
 from device_monitor.alerts.service import AlertService
 from device_monitor.assist.llm import Assistant
 from device_monitor.discovery.jobs import ScanJobs
@@ -23,9 +24,10 @@ class App:
         self.storage = storage or SqlAlchemyStorage(config.DB_PATH)
         self.alerts = AlertService(self.storage, run_sender=config.MONITOR_ENABLED)
         self.relay = RelayManager(self.storage)
-        self.scans = ScanJobs(self.storage)
+        self.tunnels = TunnelManager(self.storage)
+        self.scans = ScanJobs(self.storage, self.tunnels)
         self.assistant = Assistant(self.storage)
-        self.monitor = Monitor(self.storage, self.alerts, self.relay)
+        self.monitor = Monitor(self.storage, self.alerts, self.relay, self.tunnels)
         self._ensure_default_user()
 
     def _ensure_default_user(self) -> None:
@@ -72,12 +74,14 @@ class App:
         if config.MONITOR_ENABLED:
             self.tray_token()
             self.alerts.start()
+            self.tunnels.start()
             self.relay.start()
             self.monitor.start()
 
     def stop(self) -> None:
         self.monitor.stop()
         self.alerts.stop()
+        self.tunnels.stop()
         self.relay.stop()
 
 

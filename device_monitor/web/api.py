@@ -78,8 +78,17 @@ def state(app) -> tuple[int, dict]:
             **s.public(),
             **summary([d for d in devices if d["site"] == s.name]),
             "muted_until": mutes.get(f"site:{s.name}"),
+            "access": app.tunnels.access(s.name).get("kind", "direct"),
         }
-        if s.proxy:
+        tunnel = app.tunnels.status(s.name)
+        if tunnel:
+            row["ssh_tunnel"] = tunnel
+        # proxy - то, что записано (его правит форма точки); effective_proxy -
+        # через что ходим сейчас. Для SSH-точки это порт живого туннеля, и
+        # отдавать его в поле proxy нельзя: форма сохранила бы его в базу, и
+        # старый порт потом достался бы туннелю другого объекта.
+        row["effective_proxy"] = app.tunnels.proxy_for(s.name, s.proxy)
+        if row["effective_proxy"]:
             # Состояние туннеля отдаём отдельно от статусов устройств: когда он
             # лёг, все устройства точки показываются down, и UI должен сказать
             # «нет связи с туннелем объекта», а не «12 устройств не отвечают».
@@ -278,11 +287,60 @@ def create_site(app, body: dict) -> tuple[int, dict]:
     return HTTPStatus.CREATED, {"site": app.storage.add_site(clean_site(body)).public()}
 
 
+def access_info(app) -> tuple[int, dict]:
+    from device_monitor.access import tunnels, vpn
+    return HTTPStatus.OK, {
+        "ssh": tunnels.ssh_available(),
+        "networkmanager": vpn.nm_available(),
+        "wireguard": vpn.wireguard_connections(),
+    }
+
+
+def ssh_public_key(app) -> tuple[int, dict]:
+    from device_monitor.access import ssh_setup
+    return HTTPStatus.OK, {"public_key": ssh_setup.public_key()}
+
+
+def ssh_test(app, body: dict) -> tuple[int, dict]:
+    from device_monitor.access import ssh_setup
+    return HTTPStatus.OK, ssh_setup.test_login(str(body.get("target") or ""))
+
+
+def ssh_install_key(app, body: dict) -> tuple[int, dict]:
+    from device_monitor.access import ssh_setup
+    return HTTPStatus.OK, ssh_setup.install_key(str(body.get("target") or ""),
+                                                str(body.get("password") or ""))
+
+
+def import_wireguard(app, body: dict) -> tuple[int, dict]:
+    from device_monitor.access import vpn
+    return HTTPStatus.OK, vpn.import_wireguard(str(body.get("conf") or ""),
+                                               str(body.get("name") or "").strip())
+
+
+def set_site_access(app, name: str, body: dict) -> tuple[int, dict]:
+    from device_monitor.access import ssh_setup
+    if app.storage.site(name) is None:
+        return HTTPStatus.NOT_FOUND, {"detail": "Точка не найдена"}
+    kind = body.get("kind")
+    if kind == "ssh":
+        ssh_setup.clean_target(str(body.get("target") or ""))   # проверка формата
+        app.tunnels.set_access(name, {"kind": "ssh", "target": str(body["target"]).strip()})
+    elif kind in ("direct", "socks"):
+        app.tunnels.set_access(name, {"kind": kind})
+    else:
+        return HTTPStatus.BAD_REQUEST, {"detail": "Доступ: direct, socks или ssh"}
+    app.monitor.request_run()
+    return HTTPStatus.OK, {"access": app.tunnels.access(name), "tunnel": app.tunnels.status(name)}
+
+
 def update_site(app, old: str, body: dict) -> tuple[int, dict]:
     # existing нужен, чтобы пустое поле пароля означало «оставить как было»:
     # наружу пароль не отдаётся, и форма его не знает.
     site = clean_site(body, existing=app.storage.site(old))
     updated = app.storage.update_site(old, site)
+    if updated.name != old:
+        app.tunnels.rename(old, updated.name)
     # Учётка точки могла смениться - устройства, которые её наследуют, надо
     # опросить заново, иначе сведения останутся собранными под старым паролем.
     app.monitor.request_run()
@@ -291,6 +349,7 @@ def update_site(app, old: str, body: dict) -> tuple[int, dict]:
 
 def delete_site(app, name: str) -> tuple[int, dict]:
     app.storage.delete_site(name)
+    app.tunnels.set_access(name, {"kind": "direct"})
     return HTTPStatus.OK, {"ok": True}
 
 

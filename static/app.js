@@ -433,7 +433,7 @@ function deviceCard(device) {
   // остального: это обычная вкладка, работает в любом браузере и не зависит
   // ни от установленного лаунчера, ни от схемы devmon://, ни от песочницы
   // snap, которая не пускает браузер к обработчикам хоста.
-  const siteProxy = (siteInfo(device.site) || {}).proxy;
+  const siteProxy = (siteInfo(device.site) || {}).effective_proxy;
   // Браузер умеет войти за нас сам, но только пока устройство спрашивает
   // пароль по HTTP - ответом 401 с заголовком WWW-Authenticate. Проверено на
   // Chrome 152: адрес вида http://логин:пароль@хост/ проходит и с Basic, и с
@@ -578,7 +578,12 @@ function deviceCard(device) {
 // ---------------------------------------------------------------------------
 
 function renderSitesScreen() {
-  els.view.append(screenHead("Точки", "Выберите точку, чтобы увидеть её оборудование."));
+  const connect = document.createElement("button");
+  connect.type = "button";
+  connect.className = "primary";
+  connect.textContent = "+ Подключить объект";
+  connect.onclick = openConnect;
+  els.view.append(screenHead("Точки", "Выберите точку, чтобы увидеть её оборудование.", "", connect));
 
   if (topologyView) {
     els.view.append(renderTopology());
@@ -594,13 +599,13 @@ function renderSitesScreen() {
         title: site,
         items: devicesOf(site, null),
         note: meta.note,
-        tunnel: meta.proxy ? (meta.tunnel || "unknown") : null,
+        tunnel: meta.effective_proxy ? (meta.tunnel || "unknown") : null,
         openLabel: "Открыть точку →",
         onOpen: () => goTo(site, null),
       })
     );
   });
-  grid.append(newTile("Новая точка", () => openGroupEditor("site", null)));
+  grid.append(newTile("Подключить объект", openConnect));
   els.view.append(grid);
 }
 
@@ -652,7 +657,7 @@ function renderTopology() {
   names.forEach((site) => {
     const meta = siteInfo(site);
     const items = devicesOf(site, null);
-    const tunnelDown = meta.proxy ? meta.tunnel === "down" : false;
+    const tunnelDown = meta.effective_proxy ? meta.tunnel === "down" : false;
     // Хаб красит siteOffline, а не только состояние туннеля: у точки без
     // прокси туннеля нет вовсе, но если не отвечает ни одно устройство —
     // связи с объектом нет, и хаб не должен выглядеть живым. Та же функция
@@ -675,7 +680,7 @@ function topoCard(site, meta, items, tunnelDown, offline) {
   name.className = "topo-card-name";
   name.textContent = site;
   head.append(name);
-  if (meta.proxy) {
+  if (meta.effective_proxy) {
     const chip = document.createElement("span");
     chip.className = `topo-chip ${tunnelDown ? "down" : "up"}`;
     chip.textContent = tunnelDown ? "туннель: down" : "туннель: up";
@@ -808,7 +813,7 @@ function renderCategoriesScreen(site) {
     crumb("← Все точки", () => goTo(null)),
     screenHead(site, `${countLabel(all)} · ${badgeLabel(all)}`, meta.note, actions)
   );
-  if (meta.proxy && meta.tunnel === "down") {
+  if (meta.effective_proxy && meta.tunnel === "down") {
     const warn = document.createElement("div");
     warn.className = "alert";
     warn.textContent = "Нет связи с туннелем объекта — статусы устройств недостоверны. "
@@ -1061,7 +1066,7 @@ function siteOffline(name) {
   const items = devicesOf(name, null);
   if (!items.length) return false;
   const info = siteInfo(name);
-  if (info.proxy && info.tunnel === "down") return true;
+  if (info.effective_proxy && info.tunnel === "down") return true;
   return items.every((d) => d.status === "down");
 }
 
@@ -1209,7 +1214,8 @@ function openGroupEditor(kind, name, site) {
   groupForm.name.value = info.name;
   groupForm.note.value = info.note || "";
   // Прокси — только у точки; для категории поле прячем.
-  document.getElementById("g-proxy-field").hidden = !isSite;
+  // У точки с доступом «через SSH» прокси держит сервис - поле руками не правится.
+  document.getElementById("g-proxy-field").hidden = !isSite || info.access === "ssh";
   groupForm.proxy.value = isSite ? (info.proxy || "") : "";
   document.getElementById("g-stream-field").hidden = !isSite;
   groupForm.stream_base.value = isSite ? (info.stream_base || "") : "";
@@ -1902,6 +1908,153 @@ alertsForm.addEventListener("submit", async (event) => {
     await refresh();
   } catch (error) {
     alertsFail(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// мастер «Подключить объект»: доступ к сети объекта без терминала
+// ---------------------------------------------------------------------------
+
+const connectDialog = document.getElementById("connect-dialog");
+const connectForm = document.getElementById("connect-form");
+const connectError = document.getElementById("connect-error");
+const connectStatus = document.getElementById("cn-status");
+
+function connectFail(error) {
+  connectError.textContent = error.message;
+  connectError.hidden = false;
+}
+
+function connectKind() {
+  return connectForm.querySelector("input[name=kind]:checked").value;
+}
+
+function syncConnectSteps() {
+  const kind = connectKind();
+  connectForm.querySelectorAll(".connect-step").forEach((step) => {
+    step.hidden = step.dataset.kind !== kind;
+  });
+}
+
+async function openConnect() {
+  connectForm.reset();
+  connectError.hidden = true;
+  connectStatus.textContent = "";
+  syncConnectSteps();
+  try {
+    const info = await api("/api/v1/access");
+    const wg = connectForm.querySelector("input[value=wireguard]");
+    const ssh = connectForm.querySelector("input[value=ssh]");
+    wg.disabled = !info.networkmanager;
+    ssh.disabled = !info.ssh;
+    if (!info.networkmanager || !info.ssh) {
+      connectStatus.textContent = "Часть вариантов недоступна: сервис работает в Docker, без доступа "
+        + "к NetworkManager и ssh этой машины. В программе из .deb они есть.";
+      connectForm.querySelector("input[value=direct]").checked = true;
+      syncConnectSteps();
+    }
+  } catch (error) {
+    connectFail(error);
+  }
+  connectDialog.showModal();
+  connectForm.name.focus();
+}
+
+connectForm.querySelectorAll("input[name=kind]").forEach((radio) => {
+  radio.addEventListener("change", syncConnectSteps);
+});
+document.getElementById("connect-cancel").onclick = () => connectDialog.close();
+
+// SSH: проверить вход по ключу; не пускает - поставить ключ паролем (один раз).
+async function ensureSshKey() {
+  const target = document.getElementById("cn-ssh").value.trim();
+  connectStatus.textContent = "Проверяю вход на сервер объекта…";
+  let result = await api("/api/v1/access/ssh/test", { method: "POST", body: JSON.stringify({ target }) });
+  if (!result.ok) {
+    const password = document.getElementById("cn-ssh-pass").value;
+    if (!password) {
+      throw new Error(`Вход по ключу не работает: ${result.detail}. Впишите пароль сервера — `
+        + "ключ поставится автоматически.");
+    }
+    connectStatus.textContent = "Ставлю ключ доступа на сервер…";
+    result = await api("/api/v1/access/ssh/install-key", {
+      method: "POST", body: JSON.stringify({ target, password }),
+    });
+    document.getElementById("cn-ssh-pass").value = "";
+  }
+  if (!result.ok) throw new Error(`Сервер не пускает: ${result.detail}`);
+  connectStatus.textContent = "Вход на сервер объекта работает.";
+  return target;
+}
+
+document.getElementById("cn-ssh-check").onclick = async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  connectError.hidden = true;
+  try {
+    await ensureSshKey();
+  } catch (error) {
+    connectFail(error);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+connectForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const go = document.getElementById("connect-go");
+  go.disabled = true;
+  connectError.hidden = true;
+  const name = connectForm.name.value.trim();
+  const kind = connectKind();
+  let subnet = "";
+  try {
+    // Название проверяем ДО импорта VPN: иначе VPN остался бы в системе, а
+    // объект не создался бы из-за дубля имени.
+    if (siteNames().some((n) => n.toLowerCase() === name.toLowerCase())) {
+      throw new Error(`Объект «${name}» уже есть`);
+    }
+    if (kind === "wireguard") {
+      const file = document.getElementById("cn-wg-file").files[0];
+      if (!file) throw new Error("Выберите файл .conf");
+      // Имя VPN - имя сетевого интерфейса: латиница, уникальное. Из
+      // кириллического названия его не вывести - общий запасной вариант
+      // давал бы всем объектам одно имя, и второй VPN клал бы первый.
+      const latin = name.toLowerCase().replace(/[^a-z0-9_-]+/g, "").replace(/^[^a-z]+/, "").slice(0, 15);
+      const vpnName = document.getElementById("cn-wg-name").value.trim() || latin;
+      if (!vpnName) throw new Error("Впишите имя VPN латиницей, например karakol");
+      connectStatus.textContent = "Импортирую VPN…";
+      const result = await api("/api/v1/access/wireguard", {
+        method: "POST", body: JSON.stringify({ name: vpnName, conf: await file.text() }),
+      });
+      if (!result.ok) throw new Error(`VPN импортирован, но не поднялся: ${result.detail}`);
+      subnet = (result.networks || []).find((n) => /\/2[2-9]$|\/3[0-2]$/.test(n)) || "";
+    }
+    let sshTarget = "";
+    if (kind === "ssh") sshTarget = await ensureSshKey();
+
+    const body = { name };
+    if (kind === "socks") body.proxy = document.getElementById("cn-socks").value.trim();
+    await api("/api/v1/sites", { method: "POST", body: JSON.stringify(body) });
+    if (kind === "ssh") {
+      await api(`/api/v1/sites/${encodeURIComponent(name)}/access`, {
+        method: "PUT", body: JSON.stringify({ kind: "ssh", target: sshTarget }),
+      });
+    }
+    connectDialog.close();
+    await refresh();
+    goTo(name, null);
+    // Сразу - поиск оборудования: подсеть из VPN, если она известна.
+    await openScan(name);
+    if (subnet) scanForm.subnet.value = subnet;
+    if (kind === "ssh") {
+      scanEls.status.textContent = "Туннель поднимается (несколько секунд). Укажите подсеть "
+        + "объекта и нажмите «Сканировать».";
+    }
+  } catch (error) {
+    connectFail(error);
+  } finally {
+    go.disabled = false;
   }
 });
 

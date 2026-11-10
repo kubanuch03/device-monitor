@@ -244,6 +244,36 @@ def assistant_names(body: dict = Body(...)):
     return _unwrap(api.assistant_names(core(), body))
 
 
+@app.get("/api/v1/access", dependencies=[Depends(require_auth)])
+def access_info():
+    return _unwrap(api.access_info(core()))
+
+
+@app.get("/api/v1/access/ssh/key", dependencies=[Depends(require_auth)])
+def ssh_public_key():
+    return _unwrap(api.ssh_public_key(core()))
+
+
+@app.post("/api/v1/access/ssh/test", dependencies=[Depends(require_auth)])
+def ssh_test(body: dict = Body(...)):
+    return _unwrap(api.ssh_test(core(), body))
+
+
+@app.post("/api/v1/access/ssh/install-key", dependencies=[Depends(require_auth)])
+def ssh_install_key(body: dict = Body(...)):
+    return _unwrap(api.ssh_install_key(core(), body))
+
+
+@app.post("/api/v1/access/wireguard", dependencies=[Depends(require_auth)])
+def import_wireguard(body: dict = Body(...)):
+    return _unwrap(api.import_wireguard(core(), body))
+
+
+@app.put("/api/v1/sites/{name}/access", dependencies=[Depends(require_auth)])
+def set_site_access(name: str, body: dict = Body(...)):
+    return _unwrap(api.set_site_access(core(), name, body))
+
+
 @app.get("/api/v1/tray")
 def tray(request: Request):
     """Значок в трее ходит с ключом из data/tray-token, а не с паролем панели:

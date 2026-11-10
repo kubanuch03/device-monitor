@@ -34,8 +34,9 @@ def suggest_subnet(hosts: list[str]) -> str:
 
 
 class ScanJobs:
-    def __init__(self, storage):
+    def __init__(self, storage, tunnels=None):
         self.storage = storage
+        self.tunnels = tunnels
         self._lock = threading.Lock()
         self._jobs: dict[str, dict] = {}
 
@@ -66,7 +67,8 @@ class ScanJobs:
             remembered = self.storage.get_setting(SUBNETS_KEY)
             remembered[site_name] = subnet.strip()
             self.storage.set_setting(SUBNETS_KEY, remembered)
-        threading.Thread(target=self._run, args=(job, hosts, site.proxy),
+        proxy = self.tunnels.proxy_for(site_name, site.proxy) if self.tunnels else site.proxy
+        threading.Thread(target=self._run, args=(job, hosts, proxy),
                          name=f"scan-{site_name}", daemon=True).start()
         return self._public(job)
 

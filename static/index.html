@@ -320,6 +320,81 @@
   </form>
 </dialog>
 
+<dialog id="connect-dialog">
+  <form method="dialog" id="connect-form">
+    <h2>Подключить объект</h2>
+    <div class="field">
+      <label for="cn-name">Название объекта</label>
+      <input id="cn-name" name="name" placeholder="Парковка Каракол" required autocomplete="off">
+    </div>
+    <fieldset class="connect-kinds">
+      <legend>Как эта машина достаёт до сети объекта</legend>
+      <label class="check-line"><input type="radio" name="kind" value="wireguard" checked>
+        <span><b>VPN WireGuard</b> — у меня есть файл <code>.conf</code> от админа объекта</span></label>
+      <label class="check-line"><input type="radio" name="kind" value="ssh">
+        <span><b>Через SSH-сервер объекта</b> — знаю адрес и пароль сервера на объекте</span></label>
+      <label class="check-line"><input type="radio" name="kind" value="direct">
+        <span><b>Уже доступен</b> — VPN подключён на этой машине (OpenConnect, другой WireGuard)</span></label>
+      <label class="check-line"><input type="radio" name="kind" value="socks">
+        <span><b>SOCKS-прокси</b> — туннель держу сам (для опытных)</span></label>
+    </fieldset>
+
+    <div class="connect-step" data-kind="wireguard">
+      <div class="row">
+        <div class="field">
+          <label for="cn-wg-file">Файл .conf</label>
+          <input id="cn-wg-file" type="file" accept=".conf,text/plain">
+        </div>
+        <div class="field narrow">
+          <label for="cn-wg-name">Имя VPN</label>
+          <input id="cn-wg-name" placeholder="karakol" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+      <p class="hint">VPN появится в системе как обычное подключение и будет подниматься сам.
+         Конфиг на весь интернет (0.0.0.0/0) и сети, занятые другим VPN, не принимаются.</p>
+    </div>
+
+    <div class="connect-step" data-kind="ssh" hidden>
+      <div class="field">
+        <label for="cn-ssh">SSH-сервер объекта</label>
+        <input id="cn-ssh" placeholder="parking@10.20.4.2" autocomplete="off" spellcheck="false">
+        <p class="hint">Сервис сам будет держать туннель и пробрасывать через него камеры.</p>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="cn-ssh-pass">Пароль сервера (один раз)</label>
+          <input id="cn-ssh-pass" type="password" autocomplete="off">
+          <p class="hint">Нужен, только чтобы поставить ключ доступа. Не сохраняется.</p>
+        </div>
+        <div class="field narrow">
+          <label>&nbsp;</label>
+          <button type="button" id="cn-ssh-check">Проверить вход</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="connect-step" data-kind="direct" hidden>
+      <p class="hint">Ничего настраивать не нужно: сервис проверяет устройства напрямую через
+         уже поднятый VPN. Если VPN не поднят — устройства будут «не отвечает».</p>
+    </div>
+
+    <div class="connect-step" data-kind="socks" hidden>
+      <div class="field">
+        <label for="cn-socks">SOCKS-прокси</label>
+        <input id="cn-socks" placeholder="socks5://127.0.0.1:1080" autocomplete="off" spellcheck="false">
+      </div>
+    </div>
+
+    <p class="hint" id="cn-status"></p>
+    <p class="form-error" id="connect-error" hidden></p>
+    <div class="editor-actions">
+      <button type="button" id="connect-cancel">Отмена</button>
+      <span class="spacer"></span>
+      <button type="submit" class="primary" id="connect-go">Подключить</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="scan-dialog" class="wide">
   <form method="dialog" id="scan-form">
     <h2 id="scan-title">Найти оборудование</h2>

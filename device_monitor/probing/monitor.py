@@ -29,10 +29,11 @@ def now_iso() -> str:
 
 
 class Monitor:
-    def __init__(self, storage, alerts=None, relay=None):
+    def __init__(self, storage, alerts=None, relay=None, tunnels=None):
         self.storage = storage
         self.alerts = alerts
         self.relay = relay
+        self.tunnel_manager = tunnels   # не self.tunnels: так называется метод состояния
         self._lock = threading.Lock()
         self._state: dict[str, dict] = {}
         self._facts: dict[str, dict] = {}
@@ -43,6 +44,14 @@ class Monitor:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_prune = 0.0
+
+    def _proxies(self) -> dict[str, str]:
+        """Прокси точек. У точки с доступом «через SSH» он вычисляется из её
+        живого туннеля (см. access/tunnels.py), а не берётся из базы."""
+        sites = self.storage.sites()
+        if self.tunnel_manager is None:
+            return {s.name: s.proxy for s in sites}
+        return {s.name: self.tunnel_manager.proxy_for(s.name, s.proxy) for s in sites}
 
     # -- состояние -------------------------------------------------------------
 
@@ -86,7 +95,7 @@ class Monitor:
         if self._stop.is_set():
             return
         devices = self.storage.devices()
-        proxies = {s.name: s.proxy for s in self.storage.sites()}
+        proxies = self._proxies()
         if self.alerts is not None:
             try:
                 self.alerts.tick()
@@ -194,7 +203,7 @@ class Monitor:
 
     def _refresh_facts(self, devices: list[Device]) -> None:
         now = time.time()
-        proxied = {s.name for s in self.storage.sites() if s.proxy}
+        proxied = {name for name, proxy in self._proxies().items() if proxy}
         relay_ports = self.relay.ports() if self.relay is not None else {}
         with self._lock:
             forced = set(self._forced)
